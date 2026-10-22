@@ -69,6 +69,7 @@ class NavStack:
                                                  self.angles, rays, valid)
         pose = self.odom.pose
         self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
+        self.belief.update_ir(pose, ir, cfg.robot)
         self.planner.update(self.belief.walls, cell_of(pose))
         self.wp = self.planner.waypoints(pose)
         self.prev_action = np.asarray(last_action, dtype=float)

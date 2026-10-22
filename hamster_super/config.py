@@ -72,7 +72,7 @@ class DomainRandomization:
     ray_spurious: float = 0.01             # probability of a false short reading
     ir_noise_std: float = 0.05
     pose_err_pos: float = 2.0              # cm, max localization error shown to the planner
-    pose_err_yaw: float = math.radians(6)
+    pose_err_yaw: float = math.radians(4)
 
 
 @dataclass

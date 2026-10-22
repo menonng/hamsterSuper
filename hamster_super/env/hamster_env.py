@@ -111,6 +111,7 @@ class HamsterMazeEnv(gym.Env):
         self.est = est
         self.belief.update(cam_origin(cfg, est), est[2], self.rays.angles, rays,
                            cfg.camera.max_range, self.rays.r_min)
+        self.belief.update_ir(est, ir, cfg.robot)
         self.planner.update(self.belief.walls, cell_of(est))
         self.wp = self.planner.waypoints(est)
         return build_obs(cfg, rays, ir, est, self.wp[0], self.wp[1], self.prev_action)
