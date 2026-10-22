@@ -1,0 +1,326 @@
+"""PPO training with curriculum and automatic GitHub releases.
+
+    python -m hamster_super.rl.train --iters 5000 --envs 32 --workers 4
+    # every 500 iterations: checkpoint + TorchScript export + eval + GitHub Release
+
+One iteration = one PPO update over envs*steps transitions.
+"""
+from __future__ import annotations
+
+import argparse
+import dataclasses
+import json
+import time
+import warnings
+from collections import deque
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+
+from ..config import EnvConfig, save_json, to_dict
+from ..env.vec_env import VecEnv
+from ..maps.generator import LEVELS
+from ..nav.stack import obs_dim
+from .evaluate import evaluate, load_maps
+from .policy import ActorCritic, DeployPolicy, RunningNorm, export_numpy
+
+
+@dataclasses.dataclass
+class PPOConfig:
+    n_envs: int = 32
+    n_steps: int = 128
+    gamma: float = 0.99
+    lam: float = 0.95
+    lr: float = 3e-4
+    clip: float = 0.2
+    epochs: int = 5
+    minibatches: int = 4
+    ent_coef: float = 0.002
+    vf_coef: float = 0.5
+    max_grad_norm: float = 0.5
+    target_kl: float = 0.03
+    hidden: tuple = (256, 256)
+
+
+class Curriculum:
+    """Promote to the next map level when the recent success rate at the current level is high."""
+
+    def __init__(self, level=0, window=200, promote_at=0.8):
+        self.level, self.window, self.promote_at = level, window, promote_at
+        self.hist = deque(maxlen=window)
+
+    def record(self, info) -> bool:
+        if info.get("level") != self.level:
+            return False
+        self.hist.append(float(info["success"]))
+        if (len(self.hist) == self.window and np.mean(self.hist) >= self.promote_at
+                and self.level < len(LEVELS) - 1):
+            self.level += 1
+            self.hist.clear()
+            return True
+        return False
+
+
+class Trainer:
+    def __init__(self, args):
+        self.args = args
+        self.out = Path(args.out)
+        self.out.mkdir(parents=True, exist_ok=True)
+        self.cfg = EnvConfig(known_map=args.known_map)
+        self.ppo = PPOConfig(n_envs=args.envs, n_steps=args.steps, lr=args.lr)
+        torch.manual_seed(args.seed)
+        torch.set_num_threads(max(1, args.torch_threads))
+        self.n_obs = obs_dim(self.cfg)
+        self.ac = ActorCritic(self.n_obs, 2, self.ppo.hidden)
+        self.opt = torch.optim.Adam(self.ac.parameters(), lr=self.ppo.lr, eps=1e-5)
+        self.norm = RunningNorm(self.n_obs)
+        self.cur = Curriculum(level=args.start_level)
+        self.iter = 0
+        self.episodes = 0
+        self.best_eval = -1.0
+        if args.resume:
+            self.load(args.resume)
+        self.eval_maps = load_maps(args.eval_maps) if args.eval_maps and Path(args.eval_maps).exists() else None
+        self.releaser = None
+        if args.release_every > 0 and not args.no_release:
+            from ..release.github_release import GitHubReleaser
+            try:
+                self.releaser = GitHubReleaser(repo=args.repo, dry_run=args.release_dry_run)
+            except Exception as e:
+                print(f"[release] disabled: {e}")
+        save_json(self.cfg, self.out / "env_config.json")
+
+    # ------------------------------------------------------------ checkpoint
+    def state(self):
+        return {"model": self.ac.state_dict(), "opt": self.opt.state_dict(), "obs_norm": self.norm.state_dict(),
+                "iter": self.iter, "episodes": self.episodes, "level": self.cur.level,
+                "obs_dim": self.n_obs, "act_dim": 2, "hidden": self.ppo.hidden,
+                "env_config": to_dict(self.cfg)}
+
+    def save(self, path):
+        torch.save(self.state(), path)
+
+    def load(self, path):
+        ck = torch.load(path, map_location="cpu", weights_only=False)
+        self.ac.load_state_dict(ck["model"])
+        self.opt.load_state_dict(ck["opt"])
+        self.norm.load_state_dict(ck["obs_norm"])
+        self.iter, self.episodes = ck["iter"], ck.get("episodes", 0)
+        self.cur.level = ck.get("level", self.cur.level)
+        print(f"resumed {path} at iter {self.iter}, level {self.cur.level}")
+
+    def export(self, path):
+        """TorchScript export + a torch-free NumPy copy (policy.npz) next to it."""
+        pol = DeployPolicy(self.ac, self.norm).eval()
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            torch.jit.script(pol).save(str(path))
+        export_numpy(self.ac, self.norm, Path(path).with_name("policy.npz"))
+        return pol
+
+    # --------------------------------------------------------------- rollout
+    def train(self):
+        a, p = self.args, self.ppo
+        venv = VecEnv(self.cfg, p.n_envs, a.workers, seed=a.seed, level=self.cur.level)
+        obs = venv.reset()
+        N, T = p.n_envs, p.n_steps
+        log_f = open(self.out / "train_log.jsonl", "a")
+        ep_ret = np.zeros(N)
+        recent = deque(maxlen=200)
+        t0 = time.time()
+        try:
+            while self.iter < a.iters:
+                it_t = time.time()
+                buf_o = np.zeros((T, N, self.n_obs), np.float32)
+                buf_a = np.zeros((T, N, 2), np.float32)
+                buf_lp = np.zeros((T, N), np.float32)
+                buf_v = np.zeros((T, N), np.float32)
+                buf_r = np.zeros((T, N), np.float32)
+                buf_d = np.zeros((T, N), np.float32)
+                for t in range(T):
+                    self.norm.update(obs)
+                    on = self.norm(obs)
+                    with torch.no_grad():
+                        ot = torch.as_tensor(on)
+                        dist = self.ac.dist(ot)
+                        act = dist.sample()
+                        lp = dist.log_prob(act).sum(-1)
+                        v = self.ac.value(ot)
+                    act_np = act.numpy()
+                    nobs, rew, done, infos = venv.step(np.clip(act_np, -1, 1))
+                    # bootstrap through time-limit truncation
+                    for i, info in enumerate(infos):
+                        if done[i] and info.get("truncated"):
+                            with torch.no_grad():
+                                tv = self.ac.value(torch.as_tensor(self.norm(info["terminal_obs"][None])))[0]
+                            rew[i] += p.gamma * float(tv)
+                    buf_o[t], buf_a[t], buf_lp[t], buf_v[t] = on, act_np, lp.numpy(), v.numpy()
+                    buf_r[t], buf_d[t] = rew, done
+                    ep_ret += rew
+                    for i, info in enumerate(infos):
+                        if done[i]:
+                            self.episodes += 1
+                            recent.append({**{k: info[k] for k in ("success", "time_s", "collisions", "level")},
+                                           "ret": float(ep_ret[i])})
+                            ep_ret[i] = 0
+                            if self.cur.record(info):
+                                print(f"*** curriculum -> level {self.cur.level}", flush=True)
+                                venv.set_level(self.cur.level)
+                            self._maybe_release_episode()
+                    obs = nobs
+                with torch.no_grad():
+                    last_v = self.ac.value(torch.as_tensor(self.norm(obs))).numpy()
+                stats = self._update(buf_o, buf_a, buf_lp, buf_v, buf_r, buf_d, last_v)
+                self.iter += 1
+                fps = N * T / (time.time() - it_t)
+                row = {"iter": self.iter, "episodes": self.episodes, "level": self.cur.level, "fps": round(fps),
+                       "elapsed_min": round((time.time() - t0) / 60, 2), **stats}
+                if recent:
+                    row.update(success=float(np.mean([r["success"] for r in recent])),
+                               ep_return=float(np.mean([r["ret"] for r in recent])),
+                               collisions=float(np.mean([r["collisions"] for r in recent])))
+                log_f.write(json.dumps(row) + "\n")
+                log_f.flush()
+                if self.iter % a.log_every == 0:
+                    print(" ".join(f"{k}={v:.3f}" if isinstance(v, float) else f"{k}={v}" for k, v in row.items()),
+                          flush=True)
+                if self.iter % a.save_every == 0:
+                    self.save(self.out / "last.pt")
+                if a.release_unit == "iter" and a.release_every > 0 and self.iter % a.release_every == 0:
+                    self.release()
+        finally:
+            venv.close()
+            log_f.close()
+            self.save(self.out / "last.pt")
+            if self.releaser:
+                self.releaser.wait()
+
+    def _maybe_release_episode(self):
+        a = self.args
+        if a.release_unit == "episode" and a.release_every > 0 and self.episodes % a.release_every == 0:
+            self.release()
+
+    def _update(self, o, a, lp, v, r, d, last_v):
+        p = self.ppo
+        T, N = r.shape
+        adv = np.zeros_like(r)
+        gae = np.zeros(N, np.float32)
+        for t in reversed(range(T)):
+            nv = last_v if t == T - 1 else v[t + 1]
+            nonterm = 1.0 - d[t]
+            delta = r[t] + p.gamma * nv * nonterm - v[t]
+            gae = delta + p.gamma * p.lam * nonterm * gae
+            adv[t] = gae
+        ret = adv + v
+        B = T * N
+        O = torch.as_tensor(o.reshape(B, -1))
+        A = torch.as_tensor(a.reshape(B, -1))
+        LP = torch.as_tensor(lp.reshape(B))
+        ADV = torch.as_tensor(adv.reshape(B))
+        RET = torch.as_tensor(ret.reshape(B))
+        ADV = (ADV - ADV.mean()) / (ADV.std() + 1e-8)
+        mb = B // p.minibatches
+        kls, pls, vls, ents = [], [], [], []
+        for _ in range(p.epochs):
+            perm = torch.randperm(B)
+            for k in range(p.minibatches):
+                idx = perm[k * mb:(k + 1) * mb]
+                dist = self.ac.dist(O[idx])
+                nlp = dist.log_prob(A[idx]).sum(-1)
+                ratio = (nlp - LP[idx]).exp()
+                pg = -torch.min(ratio * ADV[idx], ratio.clamp(1 - p.clip, 1 + p.clip) * ADV[idx]).mean()
+                vl = 0.5 * (self.ac.value(O[idx]) - RET[idx]).pow(2).mean()
+                ent = dist.entropy().sum(-1).mean()
+                loss = pg + p.vf_coef * vl - p.ent_coef * ent
+                self.opt.zero_grad()
+                loss.backward()
+                nn.utils.clip_grad_norm_(self.ac.parameters(), p.max_grad_norm)
+                self.opt.step()
+                with torch.no_grad():
+                    kls.append(float((LP[idx] - nlp).mean()))
+                pls.append(pg.item())
+                vls.append(vl.item())
+                ents.append(ent.item())
+            if np.mean(kls[-p.minibatches:]) > p.target_kl:
+                break
+        with torch.no_grad():
+            self.ac.log_std.clamp_(-2.5, 0.5)
+        return {"pi_loss": float(np.mean(pls)), "v_loss": float(np.mean(vls)), "entropy": float(np.mean(ents)),
+                "kl": float(np.mean(kls)), "std": float(self.ac.log_std.exp().mean())}
+
+    # --------------------------------------------------------------- release
+    def release(self):
+        a = self.args
+        n = self.iter if a.release_unit == "iter" else self.episodes
+        tag = f"{a.tag_prefix}-{a.release_unit}{n:06d}"
+        rdir = self.out / "releases" / tag
+        rdir.mkdir(parents=True, exist_ok=True)
+        ck = rdir / "checkpoint.pt"
+        ts = rdir / "policy_ts.pt"
+        self.save(ck)
+        pol = self.export(ts)
+        t = time.time()
+        metrics = {"tag": tag, "iter": self.iter, "episodes": self.episodes, "curriculum_level": self.cur.level}
+        metrics["eval_random"] = evaluate(pol, self.cfg, a.eval_episodes, level=len(LEVELS) - 1)
+        if self.eval_maps:
+            metrics["eval_maps"] = evaluate(pol, self.cfg, max(a.eval_episodes // 2, len(self.eval_maps)),
+                                            maps=self.eval_maps)
+        metrics["eval_seconds"] = round(time.time() - t, 1)
+        (rdir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+        save_json(self.cfg, rdir / "env_config.json")
+        sr = metrics["eval_random"]["success_rate"]
+        if sr >= self.best_eval:
+            self.best_eval = sr
+            self.save(self.out / "best.pt")
+            self.export(self.out / "best_policy_ts.pt")
+        er = metrics["eval_random"]
+        notes = (f"## HamsterSuper autonomous-driving policy `{tag}`\n\n"
+                 f"- PPO iterations: {self.iter} / episodes: {self.episodes}\n"
+                 f"- Curriculum level: {self.cur.level}\n"
+                 f"- Random maps (hardest level, domain randomization ON): success rate **{er['success_rate']:.1%}**, "
+                 f"collisions per episode {er['collisions_per_episode']:.2f}, "
+                 f"mean finish time {er['mean_time_s'] if er['mean_time_s'] is None else round(er['mean_time_s'], 2)}s\n")
+        if "eval_maps" in metrics:
+            notes += f"- Example maps: success rate **{metrics['eval_maps']['success_rate']:.1%}**\n"
+        notes += ("\n### Files\n- `policy_ts.pt`: TorchScript model for the real robot/server "
+                  "(`python -m hamster_super.server --model policy_ts.pt`)\n"
+                  "- `policy.npz`: the same policy for NumPy-only inference (no torch, e.g. Raspberry Pi)\n"
+                  "- `checkpoint.pt`: resume training (`--resume`)\n- `metrics.json`, `env_config.json`\n")
+        print(f"[release] {tag}: eval success {sr:.1%}", flush=True)
+        if self.releaser:
+            self.releaser.publish(tag, f"HamsterSuper {tag}", notes,
+                                  [ts, rdir / "policy.npz", ck, rdir / "metrics.json", rdir / "env_config.json"])
+
+
+def main():
+    ap = argparse.ArgumentParser(description="HamsterSuper PPO training")
+    ap.add_argument("--iters", type=int, default=5000)
+    ap.add_argument("--envs", type=int, default=32)
+    ap.add_argument("--steps", type=int, default=128)
+    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--lr", type=float, default=3e-4)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--torch-threads", type=int, default=1)
+    ap.add_argument("--start-level", type=int, default=0)
+    ap.add_argument("--known-map", action="store_true", help="the planner knows the full map")
+    ap.add_argument("--out", default="runs/ppo")
+    ap.add_argument("--resume", default=None)
+    ap.add_argument("--log-every", type=int, default=10)
+    ap.add_argument("--save-every", type=int, default=50)
+    ap.add_argument("--eval-episodes", type=int, default=60)
+    ap.add_argument("--eval-maps", default="maps")
+    # Release: every 500 iterations (or episodes) to GitHub Releases
+    ap.add_argument("--release-every", type=int, default=500)
+    ap.add_argument("--release-unit", choices=["iter", "episode"], default="iter")
+    ap.add_argument("--tag-prefix", default="model")
+    ap.add_argument("--repo", default=None, help="owner/repo (default: git origin)")
+    ap.add_argument("--release-dry-run", action="store_true")
+    ap.add_argument("--no-release", action="store_true")
+    args = ap.parse_args()
+    Trainer(args).train()
+
+
+if __name__ == "__main__":
+    main()

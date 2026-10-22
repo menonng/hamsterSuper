@@ -1,0 +1,6 @@
+numpy>=1.24
+gymnasium>=0.29
+torch>=2.1
+opencv-python-headless>=4.8
+roboid>=1.6        # Robomation Hamster (real robot only)
+pytest>=7          # tests

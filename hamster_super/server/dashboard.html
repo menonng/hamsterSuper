@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HamsterSuper Control Panel</title>
+<style>
+  :root {
+    --red: #FF0045; --orange: #FF7E00; --yellow: #FFCC11; --green: #55BB44;
+    --sky: #39C5BB; --blue: #3355BB; --purple: #660099; --pink: #FFB4CC;
+    --bg: #F3F5FB;        /* light tint of blue */
+    --panel: #FFFFFF;
+    --ink: #1B2A5E;       /* dark blue */
+    --muted: #6B78A8;     /* muted blue */
+    --line: #D9DFF2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  header { padding: 14px 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+           border-bottom: 1px solid var(--line); background: var(--panel); }
+  h1 { font-size: 18px; margin: 0; color: var(--blue); }
+  .status { font-weight: 600; padding: 4px 10px; border-radius: 999px; background: var(--line); }
+  .status.run { background: var(--green); color: #fff; }
+  .status.goal { background: var(--yellow); color: var(--ink); }
+  .status.err { background: var(--red); color: #fff; }
+  button { border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 600; cursor: pointer; color: #fff; }
+  .start { background: var(--green); } .stop { background: var(--red); } .reset { background: var(--blue); }
+  main { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 16px; padding: 16px; }
+  @media (max-width: 800px) { main { grid-template-columns: minmax(0, 1fr); } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  canvas { width: 100%; height: auto; display: block; }
+  img { width: 100%; image-rendering: pixelated; border-radius: 8px; background: var(--line); min-height: 60px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 4px 0; border-bottom: 1px solid var(--line); }
+  td:last-child { text-align: right; font-variant-numeric: tabular-nums; }
+  .legend { font-size: 12px; color: var(--muted); display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: middle; }
+  .bar { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
+  .bar > div { height: 100%; background: var(--orange); }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐹 HamsterSuper</h1>
+  <span id="status" class="status">-</span>
+  <span style="flex:1"></span>
+  <button class="start" onclick="post('/api/start')">Start</button>
+  <button class="stop" onclick="post('/api/stop')">Stop</button>
+  <button class="reset" onclick="post('/api/reset')">Reset</button>
+</header>
+<main>
+  <div class="card">
+    <canvas id="map" width="900" height="600"></canvas>
+    <div class="legend">
+      <span><i class="sw" style="background:var(--blue)"></i>Detected walls</span>
+      <span><i class="sw" style="background:var(--purple);opacity:.35"></i>Actual walls (sim)</span>
+      <span><i class="sw" style="background:var(--green)"></i>Planned path</span>
+      <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
+      <span><i class="sw" style="background:var(--orange)"></i>Estimated pose</span>
+      <span><i class="sw" style="background:var(--pink)"></i>Actual pose (sim)</span>
+      <span><i class="sw" style="background:var(--red)"></i>Goal</span>
+    </div>
+  </div>
+  <div style="display:grid; gap:16px; align-content:start">
+    <div class="card"><img id="cam" alt="Camera"></div>
+    <div class="card">
+      <table id="info"></table>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)">Left / right wheels</div>
+      <div class="bar"><div id="wl"></div></div><div style="height:4px"></div>
+      <div class="bar"><div id="wr"></div></div>
+    </div>
+  </div>
+</main>
+<script>
+const G = 9;
+const cv = document.getElementById('map'), ctx = cv.getContext('2d');
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+async function post(u) { await fetch(u, {method: 'POST'}); }
+
+function draw(s) {
+  const [x0, y0, x1, y1] = s.bounds;
+  const W = (x1 - x0 + 1) * G, H = (y1 - y0 + 1) * G, pad = 6;
+  const sc = Math.min((cv.width - 2 * pad) / W, (cv.height - 2 * pad) / H);
+  const X = x => pad + (x - x0 * G) * sc, Y = y => cv.height - pad - (y - y0 * G) * sc;
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  // floor dots
+  ctx.fillStyle = css('--line');
+  for (let i = x0; i <= x1 + 1; i++) for (let j = y0; j <= y1 + 1; j++) {
+    ctx.beginPath(); ctx.arc(X(i * G), Y(j * G), 2.5, 0, 7); ctx.fill();
+  }
+  const walls = (list, col, w, alpha) => {
+    if (!list) return; ctx.strokeStyle = col; ctx.lineWidth = w; ctx.globalAlpha = alpha; ctx.lineCap = 'round';
+    for (const [a, b] of list) { ctx.beginPath(); ctx.moveTo(X(a[0] * G), Y(a[1] * G)); ctx.lineTo(X(b[0] * G), Y(b[1] * G)); ctx.stroke(); }
+    ctx.globalAlpha = 1;
+  };
+  walls(s.true_walls, css('--purple'), Math.max(3, 0.5 * sc), 0.25);
+  walls(s.walls, css('--blue'), Math.max(3, 0.5 * sc), 1);
+  // goal
+  ctx.fillStyle = css('--red'); ctx.globalAlpha = 0.85;
+  ctx.fillRect(X(s.goal[0] * G + 2), Y(s.goal[1] * G + 7), 5 * sc, 5 * sc); ctx.globalAlpha = 1;
+  // path
+  if (s.path.length) {
+    ctx.strokeStyle = css('--green'); ctx.lineWidth = 3; ctx.setLineDash([6, 6]); ctx.beginPath();
+    ctx.moveTo(X(s.pose[0]), Y(s.pose[1]));
+    for (const c of s.path.slice(1)) ctx.lineTo(X((c[0] + .5) * G), Y((c[1] + .5) * G));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  // rays
+  const [px, py, th] = s.pose;
+  const cx = px + s.cam_forward * Math.cos(th), cy = py + s.cam_forward * Math.sin(th);
+  ctx.strokeStyle = css('--sky'); ctx.lineWidth = 1.2;
+  s.rays.forEach((r, k) => { const a = th + s.ray_angles[k];
+    ctx.beginPath(); ctx.moveTo(X(cx), Y(cy)); ctx.lineTo(X(cx + r * Math.cos(a)), Y(cy + r * Math.sin(a))); ctx.stroke(); });
+  const robot = (p, col) => { if (!p) return;
+    ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 2.2 * sc, 0, 7); ctx.fill();
+    ctx.strokeStyle = css('--ink'); ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1]));
+    ctx.lineTo(X(p[0] + 3 * Math.cos(p[2])), Y(p[1] + 3 * Math.sin(p[2]))); ctx.stroke(); };
+  robot(s.true_pose, css('--pink'));
+  robot(s.pose, css('--orange'));
+}
+
+function info(s) {
+  const st = document.getElementById('status');
+  st.textContent = s.status;
+  st.className = 'status' + (s.running ? ' run' : s.status.startsWith('GOAL') ? ' goal' : s.status.startsWith('error') ? ' err' : '');
+  const rows = [
+    ['Elapsed', s.elapsed == null ? '-' : s.elapsed.toFixed(2) + ' s'],
+    ['Control rate', s.loop_hz + ' Hz'],
+    ['Steps', s.steps],
+    ['Estimated pose', `${s.pose[0].toFixed(1)}, ${s.pose[1].toFixed(1)} cm / ${(s.pose[2] * 180 / Math.PI).toFixed(0)}°`],
+    ['Detected walls', s.walls.length],
+    ['Localizer points', s.localizer_points],
+    ['IR L/R', s.ir.map(v => v.toFixed(2)).join(' / ')],
+    ['Collisions (sim)', s.collisions == null ? '-' : s.collisions],
+  ];
+  document.getElementById('info').innerHTML = rows.map(r => `<tr><td>${r[0]}</td><td>${r[1]}</td></tr>`).join('');
+  const bar = (id, v) => { const e = document.getElementById(id); e.style.width = Math.abs(v) * 100 + '%';
+    e.style.background = v >= 0 ? css('--orange') : css('--purple'); };
+  bar('wl', s.action[0]); bar('wr', s.action[1]);
+}
+
+async function loop() {
+  try {
+    const s = await (await fetch('/api/state')).json();
+    draw(s); info(s);
+    document.getElementById('cam').src = '/api/camera.jpg?t=' + Date.now();
+  } catch (e) {}
+  setTimeout(loop, 200);
+}
+loop();
+</script>
+</body>
+</html>

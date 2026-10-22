@@ -1,0 +1,19 @@
+[project]
+name = "hamster-super"
+version = "0.1.0"
+description = "Hamster robot maze-race autonomy: sim, deep RL (PPO), camera perception and control server"
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24", "gymnasium>=0.29", "torch>=2.1", "opencv-python-headless>=4.8"]
+
+[project.optional-dependencies]
+robot = ["roboid>=1.6"]
+dev = ["pytest>=7"]
+
+[tool.setuptools.packages.find]
+include = ["hamster_super*"]
+
+[tool.setuptools.package-data]
+hamster_super = ["server/dashboard.html"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
