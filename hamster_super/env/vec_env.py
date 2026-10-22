@@ -43,6 +43,8 @@ def _worker(conn, cfg, n, seed, level, maps):
                 conn.send(None)
             elif cmd == "close":
                 break
+    except (EOFError, KeyboardInterrupt):   # parent went away
+        pass
     finally:
         conn.close()
 

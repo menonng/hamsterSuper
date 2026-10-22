@@ -135,5 +135,6 @@ class Runtime:
                 "elapsed": None if self.t_start is None else (self.finish_time or time.time() - self.t_start),
                 "loop_hz": round(self.loop_hz, 1),
                 "collisions": getattr(self.hw, "collisions", None),
-                "localizer_points": self.stack.loc.last_used if self.stack.loc else 0,
+                "localizer_points": self.stack.pf.last_used if self.stack.pf else 0,
+                "speed_scale": round(self.stack.pf.scale, 3) if self.stack.pf else None,
             }

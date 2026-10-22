@@ -13,7 +13,7 @@ import numpy as np
 
 from ..config import GRID_SPACING, EnvConfig
 from ..maps.grid_map import GridMap, cell_of
-from .localizer import GridSnapLocalizer, Odometry
+from .localizer import GridSnapLocalizer, LatticeParticleFilter, Odometry
 from .mapper import BeliefMap
 from .planner import Planner
 
@@ -44,16 +44,18 @@ def cam_origin(cfg: EnvConfig, pose) -> np.ndarray:
 
 class NavStack:
     def __init__(self, cfg: EnvConfig, bounds, start_pose, goal, r_min, prior: GridMap | None = None,
-                 localize: bool = True, delay_steps: int = 1):
+                 localize: bool = True, delay_steps: int = 1, rng=None):
         self.cfg = cfg
         self.angles = cfg.camera.ray_angles()
         self.r_min = np.asarray(r_min)
         self.belief = BeliefMap(bounds, prior=prior)
         self.planner = Planner(bounds, goal)
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
-        self.loc = GridSnapLocalizer() if localize else None
+        self.loc = None
+        self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
         self.wp = (None, None)
+        self.loc_range = 35.0
 
     @property
     def pose(self):
@@ -61,12 +63,16 @@ class NavStack:
 
     def step(self, rays, ir, last_action) -> np.ndarray:
         cfg = self.cfg
+        before = self.odom.pose.copy()
         self.odom.step(last_action, cfg.dt, cfg.substeps)
         mr = cfg.camera.max_range
-        valid = (rays < mr - 0.5) & (rays > self.r_min + 0.3) & (rays < 25.0)
-        if self.loc is not None:
-            self.odom.pose[:] = self.loc.correct(self.odom.pose, cam_origin(cfg, self.odom.pose),
-                                                 self.angles, rays, valid)
+        if self.pf is not None:
+            d = before[:2] - self.odom.pose[:2]
+            dist = float(np.hypot(*d)) * (1 if np.dot(-d, [math.cos(before[2]), math.sin(before[2])]) >= 0 else -1)
+            dth = float((self.odom.pose[2] - before[2] + math.pi) % (2 * math.pi) - math.pi)
+            self.pf.predict(dist, dth)
+            self.pf.update(self.wall_points(rays, ir), self.belief)
+            self.odom.pose[:] = self.pf.pose
         pose = self.odom.pose
         self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
         self.belief.update_ir(pose, ir, cfg.robot)
@@ -74,6 +80,22 @@ class NavStack:
         self.wp = self.planner.waypoints(pose)
         self.prev_action = np.asarray(last_action, dtype=float)
         return build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action)
+
+    def wall_points(self, rays, ir) -> np.ndarray:
+        """Wall-centerline points in the robot frame from camera rays + IR."""
+        cfg = self.cfg
+        ok = (rays < self.loc_range) & (rays > self.r_min + 0.3)
+        d = rays[ok] + 0.25
+        a = self.angles[ok]
+        f = cfg.camera.mount_forward
+        pts = [np.stack([f + d * np.cos(a), d * np.sin(a)], axis=1)]
+        rs = cfg.robot
+        for val, sign in zip(ir, (1, -1)):
+            if val > 0.15:
+                dd = (1 - val) * rs.ir_range + 0.25
+                pts.append(np.array([[rs.ir_offset + dd * math.cos(sign * rs.ir_angle),
+                                      dd * math.sin(sign * rs.ir_angle)]]))
+        return np.concatenate(pts)
 
     def reached_goal(self, tol: float = 3.5) -> bool:
         from ..maps.grid_map import cell_center

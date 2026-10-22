@@ -47,8 +47,8 @@ class Odometry:
 
 
 class GridSnapLocalizer:
-    def __init__(self, tol: float = 2.0, alpha: float = 0.5, min_points: int = 4):
-        self.tol, self.alpha, self.min_points = tol, alpha, min_points
+    def __init__(self, tol: float = 2.0, alpha: float = 0.5, min_points: int = 4, damp=(0.5, 20.0)):
+        self.tol, self.alpha, self.min_points, self.damp = tol, alpha, min_points, damp
         self.last_used = 0
 
     def correct(self, pose, cam_origin, angles, ranges, valid) -> np.ndarray:
@@ -77,7 +77,7 @@ class GridSnapLocalizer:
         r = np.asarray(res)
         # Robust weights (Huber) + damping prior
         w = 1.0 / np.maximum(1.0, np.abs(r) / 0.7)
-        A = J.T @ (J * w[:, None]) + np.diag([0.5, 0.5, 20.0])
+        A = J.T @ (J * w[:, None]) + np.diag([self.damp[0], self.damp[0], self.damp[1]])
         b = -J.T @ (r * w)
         delta = np.linalg.solve(A, b)
         # A single axis seen only (e.g. a corridor) must not move the other axis
@@ -88,3 +88,93 @@ class GridSnapLocalizer:
         out = np.asarray(pose, dtype=float) + self.alpha * delta
         out[2] = wrap(out[2])
         return out
+
+
+class LatticeParticleFilter:
+    """Monte Carlo localization against the 9 cm wall lattice.
+
+    State per particle: x, y, heading and a speed scale (the Hamster's real
+    speed is unknown to +-30% and changes with battery/floor). Motion uses the
+    odometry increment scaled per particle plus noise (covers slip, wheel
+    imbalance and being pinned against a wall). Measurement: wall points seen
+    by the camera / IR must lie on a grid line x = 9i or y = 9j.
+    """
+
+    def __init__(self, pose, n: int = 256, scale_range=(0.7, 1.3), sigma_hit: float = 0.8,
+                 rng: np.random.Generator | None = None):
+        self.rng = rng or np.random.default_rng()
+        self.n = n
+        self.sigma = sigma_hit
+        self.p = np.zeros((n, 4))
+        self.p[:, :3] = np.asarray(pose, dtype=float)
+        self.p[:, 0:2] += self.rng.normal(0, 0.3, (n, 2))
+        self.p[:, 2] += self.rng.normal(0, 0.03, n)
+        self.p[:, 3] = self.rng.uniform(*scale_range, n)
+        self.w = np.full(n, 1.0 / n)
+        self.last_used = 0
+
+    def predict(self, dist: float, dtheta: float):
+        """dist / dtheta: odometry increments at nominal calibration."""
+        n, p, rng = self.n, self.p, self.rng
+        d = dist * p[:, 3] * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * abs(dist), n)
+        # being pinned against a wall: some particles do not move at all
+        stuck = rng.random(n) < 0.05
+        d[stuck] = 0.0
+        th = p[:, 2] + 0.5 * dtheta * (1 + rng.normal(0, 0.1, n)) + rng.normal(0, 0.01 + 0.04 * abs(dist), n)
+        p[:, 0] += d * np.cos(th)
+        p[:, 1] += d * np.sin(th)
+        p[:, 2] = th + 0.5 * dtheta
+        p[:, 3] = np.clip(p[:, 3] + rng.normal(0, 0.003, n), 0.5, 1.6)
+
+    def update(self, pts_local: np.ndarray, belief=None):
+        """pts_local: (M, 2) wall points in the robot frame (x fwd, y left)."""
+        self.last_used = len(pts_local)
+        if len(pts_local) < 3:
+            return
+        p = self.p
+        c, s = np.cos(p[:, 2]), np.sin(p[:, 2])
+        wx = p[:, 0:1] + c[:, None] * pts_local[None, :, 0] - s[:, None] * pts_local[None, :, 1]
+        wy = p[:, 1:2] + s[:, None] * pts_local[None, :, 0] + c[:, None] * pts_local[None, :, 1]
+        gx, gy = wx / G, wy / G
+        dx = np.abs(gx - np.round(gx)) * G
+        dy = np.abs(gy - np.round(gy)) * G
+        d = np.minimum(dx, dy)
+        lik = np.exp(-0.5 * (d / self.sigma) ** 2)
+        if belief is not None:
+            # points must also agree with what is already mapped: on a known
+            # wall (x1), unknown edge (x0.5) or an edge seen to be free (x0.1)
+            x0, y0, V, H = belief.edge_arrays()
+            vert = dx < dy
+            ii = np.where(vert, np.round(gx), np.floor(gx)).astype(int) - x0
+            jj = np.where(vert, np.floor(gy), np.round(gy)).astype(int) - y0
+            ii = np.clip(ii, 0, V.shape[0] - 1)
+            jj = np.clip(jj, 0, V.shape[1] - 1)
+            st = np.where(vert, V[ii, jj], H[ii, jj])
+            lik = lik * np.choose(st + 1, [0.1, 0.5, 1.0])
+        ll = np.log(0.15 + lik).sum(axis=1)
+        ll -= ll.max()
+        self.w *= np.exp(ll)
+        tot = self.w.sum()
+        if not np.isfinite(tot) or tot <= 0:
+            self.w[:] = 1.0 / self.n
+        else:
+            self.w /= tot
+        if 1.0 / np.sum(self.w ** 2) < self.n / 2:
+            self._resample()
+
+    def _resample(self):
+        n = self.n
+        pos = (self.rng.random() + np.arange(n)) / n
+        idx = np.minimum(np.searchsorted(np.cumsum(self.w), pos), n - 1)
+        self.p = self.p[idx]
+        self.w = np.full(n, 1.0 / n)
+
+    @property
+    def pose(self) -> np.ndarray:
+        w = self.w
+        th = math.atan2(np.sum(w * np.sin(self.p[:, 2])), np.sum(w * np.cos(self.p[:, 2])))
+        return np.array([np.sum(w * self.p[:, 0]), np.sum(w * self.p[:, 1]), th])
+
+    @property
+    def scale(self) -> float:
+        return float(np.sum(self.w * self.p[:, 3]))

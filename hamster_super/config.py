@@ -73,6 +73,7 @@ class DomainRandomization:
     ir_noise_std: float = 0.05
     pose_err_pos: float = 2.0              # cm, max localization error shown to the planner
     pose_err_yaw: float = math.radians(4)
+    calib_error: float = 0.07              # residual error of the speed/track calibration
 
 
 @dataclass
@@ -81,6 +82,7 @@ class EnvConfig:
     substeps: int = 4
     steps_per_cell: int = 40               # timeout = steps_per_cell * shortest path cells + 100
     known_map: bool = False                # True: the planner knows the full map in advance
+    full_stack_prob: float = 0.0           # fraction of episodes using odometry + particle filter
     # Reward
     r_progress: float = 0.1                # per cm of progress
     r_goal: float = 10.0

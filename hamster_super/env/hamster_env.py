@@ -1,6 +1,7 @@
 """Gymnasium environment: Hamster maze race from start cell to goal cell."""
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import gymnasium as gym
@@ -11,7 +12,7 @@ from ..maps.generator import generate
 from ..maps.grid_map import GridMap, cell_center, cell_of
 from ..nav.mapper import BeliefMap
 from ..nav.planner import Planner
-from ..nav.stack import build_obs, cam_origin, obs_dim
+from ..nav.stack import NavStack, build_obs, cam_origin, obs_dim
 from ..sim.robot import SimRobot, wrap
 from ..sim.sensors import DepthRays
 
@@ -71,13 +72,22 @@ class HamsterMazeEnv(gym.Env):
         self.pose_err = np.zeros(3)
         self.belief = BeliefMap(self.bounds, prior=m if self.cfg.known_map else None)
         self.planner = Planner(self.bounds, m.goal)
-        if self.full_stack:
-            from ..nav.stack import NavStack
+        self.use_stack = self.full_stack or (self.rng.random() < self.cfg.full_stack_prob)
+        if self.use_stack:
             self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, m.goal, self.rays.r_min,
-                                  prior=m if self.cfg.known_map else None)
+                                  prior=m if self.cfg.known_map else None, rng=self.rng)
+            self.stack.odom.spec = self._calibrated_spec()
         obs = self._observe()
         self.prev_pose = self.robot.pose
         return obs, {}
+
+    def _calibrated_spec(self):
+        """Odometry parameters as a user would measure them with the
+        calibration tool: the true robot's values plus a small error."""
+        r, e = self.robot, self.cfg.dr.calib_error if self.cfg.dr.enabled else 0.0
+        jit = lambda: 1 + self.rng.normal(0, e)
+        return dataclasses.replace(self.cfg.robot, max_speed=r.vmax * float(np.mean(r.gain)) * jit(),
+                                   track_width=r.track * jit(), motor_tau=r.tau)
 
     def _sample_level(self) -> int:
         """Curriculum: mostly the current max level, sometimes easier ones."""
@@ -101,7 +111,7 @@ class HamsterMazeEnv(gym.Env):
         pose = self.robot.pose
         self.last_rays = rays = self.rays.measure(pose, self.boxes, cfg.dr, self.rng)
         ir = self.robot.ir(self.boxes)
-        if self.full_stack:
+        if self.use_stack:
             obs = self.stack.step(rays, ir, self.prev_action)
             self.belief, self.planner = self.stack.belief, self.stack.planner
             self.est = self.stack.pose.copy()

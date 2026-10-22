@@ -29,6 +29,9 @@ class BeliefMap:
         if prior is not None:   # known map: walls are certain
             self.fixed = set(prior.walls)
         self._cache = None
+        self.free_threshold = -1.0
+        self.version = 0
+        self._arrays, self._arrays_version = None, -1
 
     @property
     def walls(self) -> set:
@@ -36,10 +39,43 @@ class BeliefMap:
             self._cache = self.fixed | {e for e, s in self.scores.items() if s >= self.threshold}
         return self._cache
 
+    def _state(self, s: float) -> int:
+        return 1 if s >= self.threshold else (-1 if s <= self.free_threshold else 0)
+
     def _add(self, e: Edge, v: float):
-        s = self.scores.get(e, 0.0) + v
-        self.scores[e] = -4.0 if s < -4.0 else (8.0 if s > 8.0 else s)
-        self._cache = None
+        old = self.scores.get(e, 0.0)
+        s = old + v
+        s = -4.0 if s < -4.0 else (8.0 if s > 8.0 else s)
+        self.scores[e] = s
+        if self._state(s) != self._state(old):
+            self._cache = None
+            self.version += 1
+
+    def edge_arrays(self):
+        """Dense edge-state grids for fast lookup: (x0, y0, V, H) with
+        V[i - x0, j - y0] = state of vertical edge (i, j)-(i, j+1) and
+        H[i - x0, j - y0] = state of horizontal edge (i, j)-(i+1, j);
+        state 1 = wall, 0 = unknown, -1 = observed free."""
+        if self._arrays is not None and self._arrays_version == self.version:
+            return self._arrays
+        x0, y0, x1, y1 = self.bounds
+        V = np.zeros((x1 - x0 + 3, y1 - y0 + 3), np.int8)
+        H = np.zeros_like(V)
+        for e, sc in self.scores.items():
+            st = self._state(sc)
+            self._put(V, H, e, st, x0, y0)
+        for e in self.fixed:
+            self._put(V, H, e, 1, x0, y0)
+        self._arrays, self._arrays_version = (x0, y0, V, H), self.version
+        return self._arrays
+
+    @staticmethod
+    def _put(V, H, e, st, x0, y0):
+        (a, b) = e
+        arr = V if a[0] == b[0] else H
+        i, j = a[0] - x0, a[1] - y0
+        if 0 <= i < arr.shape[0] and 0 <= j < arr.shape[1]:
+            arr[i, j] = st
 
     def update(self, origin, heading: float, angles, ranges, max_range: float, r_min):
         ox, oy = float(origin[0]), float(origin[1])

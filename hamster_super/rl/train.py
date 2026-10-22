@@ -68,7 +68,7 @@ class Trainer:
         self.args = args
         self.out = Path(args.out)
         self.out.mkdir(parents=True, exist_ok=True)
-        self.cfg = EnvConfig(known_map=args.known_map)
+        self.cfg = EnvConfig(known_map=args.known_map, full_stack_prob=args.full_stack_prob)
         self.ppo = PPOConfig(n_envs=args.envs, n_steps=args.steps, lr=args.lr)
         torch.manual_seed(args.seed)
         torch.set_num_threads(max(1, args.torch_threads))
@@ -305,6 +305,8 @@ def main():
     ap.add_argument("--torch-threads", type=int, default=1)
     ap.add_argument("--start-level", type=int, default=0)
     ap.add_argument("--known-map", action="store_true", help="the planner knows the full map")
+    ap.add_argument("--full-stack-prob", type=float, default=0.7,
+                    help="fraction of episodes driven with odometry + particle-filter localization")
     ap.add_argument("--out", default="runs/ppo")
     ap.add_argument("--resume", default=None)
     ap.add_argument("--log-every", type=int, default=10)
