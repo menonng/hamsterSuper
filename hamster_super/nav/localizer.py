@@ -93,8 +93,9 @@ class GridSnapLocalizer:
 class LatticeParticleFilter:
     """Monte Carlo localization against the 9 cm wall lattice.
 
-    State per particle: x, y, heading and a speed scale (the Hamster's real
-    speed is unknown to +-30% and changes with battery/floor). Motion uses the
+    State per particle: x, y, heading, a speed scale (the Hamster's real
+    speed is unknown to +-30% and changes with battery/floor) and a curvature
+    bias from left/right wheel imbalance; both are learned online. Motion uses the
     odometry increment scaled per particle plus noise (covers slip, wheel
     imbalance and being pinned against a wall). Measurement: wall points seen
     by the camera / IR must lie on a grid line x = 9i or y = 9j.
@@ -105,26 +106,47 @@ class LatticeParticleFilter:
         self.rng = rng or np.random.default_rng()
         self.n = n
         self.sigma = sigma_hit
-        self.p = np.zeros((n, 4))
+        # columns: x, y, heading, speed scale, curvature bias (rad per cm; wheel imbalance)
+        self.p = np.zeros((n, 5))
         self.p[:, :3] = np.asarray(pose, dtype=float)
         self.p[:, 0:2] += self.rng.normal(0, 0.3, (n, 2))
         self.p[:, 2] += self.rng.normal(0, 0.03, n)
         self.p[:, 3] = self.rng.uniform(*scale_range, n)
+        self.p[:, 4] = self.rng.normal(0, 0.012, n)
         self.w = np.full(n, 1.0 / n)
         self.last_used = 0
 
     def predict(self, dist: float, dtheta: float):
         """dist / dtheta: odometry increments at nominal calibration."""
         n, p, rng = self.n, self.p, self.rng
-        d = dist * p[:, 3] * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * abs(dist), n)
+        sc = p[:, 3]
+        d = dist * sc * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * abs(dist), n)
         # being pinned against a wall: some particles do not move at all
         stuck = rng.random(n) < 0.05
         d[stuck] = 0.0
-        th = p[:, 2] + 0.5 * dtheta * (1 + rng.normal(0, 0.1, n)) + rng.normal(0, 0.01 + 0.04 * abs(dist), n)
+        # rotation shares the unknown wheel-speed scale; fast spins + latency need wide noise
+        dth = (dtheta * sc * (1 + rng.normal(0, 0.2, n)) + p[:, 4] * d
+               + rng.normal(0, 0.01 + 0.02 * abs(dist) + 0.05 * abs(dtheta), n))
+        th = p[:, 2] + 0.5 * dth
         p[:, 0] += d * np.cos(th)
         p[:, 1] += d * np.sin(th)
-        p[:, 2] = th + 0.5 * dtheta
+        p[:, 2] = th + 0.5 * dth
         p[:, 3] = np.clip(p[:, 3] + rng.normal(0, 0.003, n), 0.5, 1.6)
+        p[:, 4] = np.clip(p[:, 4] + rng.normal(0, 0.0005, n), -0.05, 0.05)
+
+    def correct_heading(self, wall_angle: float, gain: float = 0.7, gate: float = math.radians(12),
+                        noise: float = 0.02) -> bool:
+        """Absolute heading fix from a measured wall orientation (robot frame).
+        Walls are axis-aligned, so heading = -wall_angle (mod 90 deg). Particles
+        move toward the nearest consistent heading; implausibly large
+        corrections are treated as outliers and ignored."""
+        th = self.p[:, 2]
+        delta = (-wall_angle - th + math.pi / 4) % (math.pi / 2) - math.pi / 4
+        mean = math.atan2(np.sum(self.w * np.sin(delta)), np.sum(self.w * np.cos(delta)))
+        if abs(mean) > gate:
+            return False
+        self.p[:, 2] = th + gain * delta + self.rng.normal(0, noise, self.n)
+        return True
 
     def update(self, pts_local: np.ndarray, belief=None):
         """pts_local: (M, 2) wall points in the robot frame (x fwd, y left)."""
@@ -178,3 +200,40 @@ class LatticeParticleFilter:
     @property
     def scale(self) -> float:
         return float(np.sum(self.w * self.p[:, 3]))
+
+
+_CAND = np.radians(np.arange(-45.0, 45.0, 1.0))
+_ROT = np.stack([np.cos(_CAND), np.sin(_CAND)], axis=1)
+
+
+def wall_orientation(pts: np.ndarray, sigma: float = 0.4, min_sep: float = 3.0, max_sep: float = 12.0,
+                     max_skip: int = 5, min_pairs: int = 4, min_ratio: float = 2.5):
+    """Dominant wall direction (mod 90 deg) in the robot frame.
+
+    Walls are axis-aligned, so in the correctly rotated frame two points on
+    the same wall share their x (or y) coordinate no matter how far apart they
+    are along the wall. Score every candidate angle by how many well-separated
+    point pairs line up; the best angle wins. Returns radians or None.
+    """
+    if len(pts) < 4:
+        return None
+    i, j = np.triu_indices(len(pts), 1)
+    d = pts[j] - pts[i]
+    sep = np.hypot(d[:, 0], d[:, 1])
+    # neighbouring rays, moderately apart: most likely the same wall
+    keep = (sep > min_sep) & (sep < max_sep) & (j - i <= max_skip)
+    if keep.sum() < min_pairs:
+        return None
+    d = d[keep]
+    c, s = _ROT[:, 0:1], _ROT[:, 1:2]
+    dx = c * d[None, :, 0] + s * d[None, :, 1]        # (A, P)
+    dy = -s * d[None, :, 0] + c * d[None, :, 1]
+    k2 = 0.5 / sigma ** 2
+    score = (np.exp(-k2 * dx ** 2) + np.exp(-k2 * dy ** 2)).sum(axis=1)
+    k = int(np.argmax(score))
+    if score[k] < min_pairs or score[k] < min_ratio * np.median(score):
+        return None
+    l, r = score[k - 1], score[(k + 1) % len(score)]
+    den = l - 2 * score[k] + r
+    off = 0.5 * (l - r) / den if den < 0 else 0.0
+    return float(_CAND[k] + np.radians(off))

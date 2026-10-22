@@ -145,6 +145,8 @@ class HamsterMazeEnv(gym.Env):
         reward = cfg.r_progress * progress + cfg.r_time + cfg.r_smooth * float(da @ da)
         if hit:
             reward += cfg.r_collision
+        back = -min(0.0, float(a[0] + a[1]) / 2)
+        reward += cfg.r_reverse * back
         terminated = truncated = False
         info = {}
         goal_d = float(np.linalg.norm(pose[:2] - cell_center(self.map.goal)))

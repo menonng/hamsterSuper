@@ -13,7 +13,7 @@ import numpy as np
 
 from ..config import GRID_SPACING, EnvConfig
 from ..maps.grid_map import GridMap, cell_of
-from .localizer import GridSnapLocalizer, LatticeParticleFilter, Odometry
+from .localizer import LatticeParticleFilter, Odometry, wall_orientation
 from .mapper import BeliefMap
 from .planner import Planner
 
@@ -51,7 +51,6 @@ class NavStack:
         self.belief = BeliefMap(bounds, prior=prior)
         self.planner = Planner(bounds, goal)
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
-        self.loc = None
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
         self.wp = (None, None)
@@ -71,7 +70,13 @@ class NavStack:
             dist = float(np.hypot(*d)) * (1 if np.dot(-d, [math.cos(before[2]), math.sin(before[2])]) >= 0 else -1)
             dth = float((self.odom.pose[2] - before[2] + math.pi) % (2 * math.pi) - math.pi)
             self.pf.predict(dist, dth)
-            self.pf.update(self.wall_points(rays, ir), self.belief)
+            pts = self.wall_points(rays, ir)
+            wa = wall_orientation(pts[:self._n_cam_pts])
+            # while spinning fast, latency makes the predicted heading unreliable
+            # and the mod-90 fix could snap to the wrong quadrant
+            if wa is not None and abs(dth) < 0.15:
+                self.pf.correct_heading(wa)
+            self.pf.update(pts, self.belief)
             self.odom.pose[:] = self.pf.pose
         pose = self.odom.pose
         self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
@@ -89,6 +94,7 @@ class NavStack:
         a = self.angles[ok]
         f = cfg.camera.mount_forward
         pts = [np.stack([f + d * np.cos(a), d * np.sin(a)], axis=1)]
+        self._n_cam_pts = len(d)
         rs = cfg.robot
         for val, sign in zip(ir, (1, -1)):
             if val > 0.15:

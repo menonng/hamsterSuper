@@ -51,3 +51,37 @@ def test_grid_snap_corrects_offset():
         est = loc.correct(est, cam_origin(cfg, est), rays.angles, r, valid)
     assert np.linalg.norm(est[:2] - true[:2]) < np.linalg.norm([1.0, -0.8])
     assert abs(est[2] - true[2]) < 0.04
+
+
+def test_wall_orientation_recovers_heading():
+    from hamster_super.nav.localizer import wall_orientation
+    from hamster_super.nav.stack import NavStack
+    cfg = EnvConfig()
+    m = load_map("maps/example_02_maze.txt")
+    rays = DepthRays(cfg.camera)
+    st = NavStack(cfg, m.cell_bounds(), (13.5, 58.5, 0.0), m.goal, rays.r_min)
+    pose = np.array([13.5, 58.5, 0.3])
+    r = rays.true_ranges(pose, m.wall_boxes())
+    pts = st.wall_points(r, np.zeros(2))
+    wa = wall_orientation(pts[:st._n_cam_pts])
+    err = ((-wa - pose[2]) + math.pi / 4) % (math.pi / 2) - math.pi / 4
+    assert abs(err) < math.radians(3)
+
+
+def test_particle_filter_tracks_unknown_speed():
+    """Robot is 20% faster than odometry thinks; the filter must keep up."""
+    from hamster_super.nav.localizer import LatticeParticleFilter
+    cfg = EnvConfig()
+    m = load_map("maps/example_01_s_curve.txt")   # top corridor runs east from (0,2)
+    boxes = m.wall_boxes()
+    rays = DepthRays(cfg.camera)
+    from hamster_super.nav.stack import NavStack
+    st = NavStack(cfg, m.cell_bounds(), (4.5, 22.5, 0.0), m.goal, rays.r_min)
+    pf = LatticeParticleFilter((4.5, 22.5, 0.0), rng=np.random.default_rng(0))
+    true = np.array([4.5, 22.5, 0.0])
+    for _ in range(12):
+        true[0] += 1.2                           # actual motion
+        pf.predict(1.0, 0.0)                     # odometry says 1.0 cm
+        pf.update(st.wall_points(rays.true_ranges(true, boxes), np.zeros(2)), st.belief)
+    assert abs(pf.pose[1] - true[1]) < 1.0       # lateral locked by the side walls
+    assert abs(pf.pose[2]) < math.radians(5)

@@ -60,7 +60,7 @@ class CameraSpec:
 class DomainRandomization:
     """Range of real-world disturbances injected during training."""
     enabled: bool = True
-    wheel_gain: tuple = (0.85, 1.15)       # per-wheel speed gain
+    wheel_gain: tuple = (0.92, 1.08)       # per-wheel speed gain (left/right imbalance)
     max_speed: tuple = (14.0, 26.0)        # cm/s
     motor_tau: tuple = (0.02, 0.15)
     action_delay_steps: tuple = (0, 2)     # camera/communication latency (in steps)
@@ -90,6 +90,7 @@ class EnvConfig:
     r_time: float = -0.02
     r_smooth: float = -0.02
     r_out: float = -5.0
+    r_reverse: float = -0.05               # per step of backward driving (the camera cannot see behind)
     robot: RobotSpec = field(default_factory=RobotSpec)
     camera: CameraSpec = field(default_factory=CameraSpec)
     dr: DomainRandomization = field(default_factory=DomainRandomization)
