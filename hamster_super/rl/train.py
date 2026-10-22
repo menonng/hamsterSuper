@@ -8,6 +8,9 @@ One iteration = one PPO update over envs*steps transitions.
 from __future__ import annotations
 
 import argparse
+import os
+import subprocess
+import sys
 import dataclasses
 import json
 import time
@@ -100,7 +103,10 @@ class Trainer:
                 "env_config": to_dict(self.cfg)}
 
     def save(self, path):
-        torch.save(self.state(), path)
+        """Atomic write so readers (the live monitor) never see a partial file."""
+        tmp = Path(str(path) + ".tmp")
+        torch.save(self.state(), tmp)
+        os.replace(tmp, path)
 
     def load(self, path):
         ck = torch.load(path, map_location="cpu", weights_only=False)
@@ -181,6 +187,9 @@ class Trainer:
                     row.update(success=float(np.mean([r["success"] for r in recent])),
                                ep_return=float(np.mean([r["ret"] for r in recent])),
                                collisions=float(np.mean([r["collisions"] for r in recent])))
+                    ok = [r["time_s"] for r in recent if r["success"]]
+                    if ok:
+                        row["finish_time"] = float(np.mean(ok))
                 log_f.write(json.dumps(row) + "\n")
                 log_f.flush()
                 if self.iter % a.log_every == 0:
@@ -310,7 +319,7 @@ def main():
     ap.add_argument("--out", default="runs/ppo")
     ap.add_argument("--resume", default=None)
     ap.add_argument("--log-every", type=int, default=10)
-    ap.add_argument("--save-every", type=int, default=50)
+    ap.add_argument("--save-every", type=int, default=10)
     ap.add_argument("--eval-episodes", type=int, default=60)
     ap.add_argument("--eval-maps", default="maps")
     # Release: every 500 iterations (or episodes) to GitHub Releases
@@ -320,8 +329,19 @@ def main():
     ap.add_argument("--repo", default=None, help="owner/repo (default: git origin)")
     ap.add_argument("--release-dry-run", action="store_true")
     ap.add_argument("--no-release", action="store_true")
+    ap.add_argument("--monitor", action="store_true", help="also start the live training dashboard")
+    ap.add_argument("--monitor-port", type=int, default=8001)
     args = ap.parse_args()
-    Trainer(args).train()
+    mon = None
+    if args.monitor:
+        mon = subprocess.Popen([sys.executable, "-m", "hamster_super.rl.monitor", "--run", args.out,
+                                "--port", str(args.monitor_port)])
+        print(f"live dashboard: http://localhost:{args.monitor_port}", flush=True)
+    try:
+        Trainer(args).train()
+    finally:
+        if mon is not None:
+            mon.terminate()
 
 
 if __name__ == "__main__":

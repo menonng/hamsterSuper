@@ -51,6 +51,22 @@ gh auth login            # 또는 export GITHUB_TOKEN=...  (repo 권한)
 python -m hamster_super.rl.train --iters 5000 --envs 32 --workers 4 --out runs/ppo
 ```
 
+### 실시간 학습 모니터 (HTML)
+
+```bash
+python -m hamster_super.rl.train --iters 5000 --out runs/ppo --monitor     # 학습 + 대시보드 함께 실행
+python -m hamster_super.rl.monitor --run runs/ppo --port 8001              # 또는 이미 돌고 있는 학습에 따로 붙이기
+```
+
+브라우저에서 `http://localhost:8001` (같은 네트워크면 `http://<PC IP>:8001`):
+
+* **학습 곡선**: 성공률, 에피소드 보상, 완주 시간, 벽 접촉, 커리큘럼 단계, 탐험(std) — 3초마다 자동 갱신,
+  마우스를 올리면 해당 iteration 값 표시, 노란 점선은 500회 릴리스 지점.
+* **라이브 리플레이**: 가장 최신 체크포인트가 무작위 미로를 실시간으로 주행 — 실제 벽 / 로봇이 찾은 벽,
+  계획 경로, 실제 궤적과 로봇의 추정 위치, 카메라 광선이 그대로 보입니다. 체크포인트가 갱신되면(10 iteration마다) 다음 판부터 새 모델로 교체.
+* **릴리스 표**: 각 릴리스의 평가 성공률·충돌·완주시간.
+* 학습과 별도 프로세스라 학습 속도에 영향 없음. 옵션: `--level 3`(리플레이 미로 크기 고정), `--speed 2`(2배속), `--ideal-pose`.
+
 * 1 iteration = 32 env × 128 step = 4,096 스텝의 PPO 업데이트.
 * **500 iteration마다** (`--release-every 500`):
   체크포인트 저장 → TorchScript/NumPy 내보내기 → 무작위 최고난도 맵 + `maps/` 예제맵 평가 →
