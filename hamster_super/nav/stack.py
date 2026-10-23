@@ -76,6 +76,9 @@ class NavStack:
             self.roundtrip.min_lap_cells = max(4, int(0.6 * (x1 - x0 + 1) * (y1 - y0 + 1)))   # courses fill the arena
             self.roundtrip.min_coverage = int(cfg.race_min_coverage * (x1 - x0 + 1) * (y1 - y0 + 1))
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
+        # the command-to-motion latency is not known exactly (camera, Bluetooth):
+        # motion increments for 0, 1 and 2 steps of delay; each particle picks one
+        self.lat_odoms = [Odometry(cfg.robot, (0.0, 0.0, 0.0), delay_steps=k) for k in range(3)]
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
         self.wp = (None, None)
@@ -87,16 +90,26 @@ class NavStack:
     def pose(self):
         return self.odom.pose
 
+    def set_odometry_spec(self, spec):
+        """Calibrated robot parameters (speed, track width, motor lag)."""
+        self.odom.spec = spec
+        for o in self.lat_odoms:
+            o.spec = spec
+
     def step(self, rays, ir, last_action) -> np.ndarray:
         cfg = self.cfg
         before = self.odom.pose.copy()
         self.odom.step(last_action, cfg.dt, cfg.substeps)
         mr = cfg.camera.max_range
         if self.pf is not None:
-            d = before[:2] - self.odom.pose[:2]
-            dist = float(np.hypot(*d)) * (1 if np.dot(-d, [math.cos(before[2]), math.sin(before[2])]) >= 0 else -1)
-            dth = float((self.odom.pose[2] - before[2] + math.pi) % (2 * math.pi) - math.pi)
-            self.pf.predict(dist, dth, walls=self.belief.strong_walls())
+            dists, dths = np.zeros(3), np.zeros(3)
+            for k, o in enumerate(self.lat_odoms):
+                o.pose[:] = 0.0
+                o.step(last_action, cfg.dt, cfg.substeps)
+                dists[k] = math.copysign(math.hypot(o.pose[0], o.pose[1]), o.pose[0])
+                dths[k] = o.pose[2]
+            dth = float(dths[1])
+            self.pf.predict(dists, dths, walls=self.belief.strong_walls())
             pts = self.wall_points(rays, ir)
             wa = wall_orientation(pts[:self._n_cam_pts])
             # while spinning fast, latency makes the predicted heading unreliable

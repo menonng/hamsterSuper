@@ -107,13 +107,15 @@ class LatticeParticleFilter:
         self.rng = rng or np.random.default_rng()
         self.n = n
         self.sigma = sigma_hit
-        # columns: x, y, heading, speed scale, curvature bias (rad per cm; wheel imbalance)
-        self.p = np.zeros((n, 5))
+        # columns: x, y, heading, speed scale, curvature bias (rad per cm; wheel imbalance),
+        # command latency in steps (0, 1, 2; learned like the scale)
+        self.p = np.zeros((n, 6))
         self.p[:, :3] = np.asarray(pose, dtype=float)
         self.p[:, 0:2] += self.rng.normal(0, 0.3, (n, 2))
         self.p[:, 2] += self.rng.normal(0, 0.03, n)
         self.p[:, 3] = self.rng.uniform(*scale_range, n)
         self.p[:, 4] = self.rng.normal(0, 0.012, n)
+        self.p[:, 5] = self.rng.integers(0, 3, n)
         self.w = np.full(n, 1.0 / n)
         self.last_used = 0
 
@@ -123,14 +125,20 @@ class LatticeParticleFilter:
         is (almost) impossible - the real robot cannot pass a rigid wall."""
         n, p, rng = self.n, self.p, self.rng
         before = np.floor(p[:, :2] / G).astype(int) if walls else None
+        if np.ndim(dist):           # one increment per latency hypothesis
+            lat = p[:, 5].astype(int)
+            flip = rng.random(n) < 0.01
+            lat[flip] = rng.integers(0, len(dist), int(flip.sum()))
+            p[:, 5] = lat
+            dist, dtheta = np.asarray(dist)[lat], np.asarray(dtheta)[lat]
         sc = p[:, 3]
-        d = dist * sc * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * abs(dist), n)
+        d = dist * sc * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * np.abs(dist), n)
         # being pinned against a wall: some particles do not move at all
         stuck = rng.random(n) < 0.05
         d[stuck] = 0.0
         # rotation shares the unknown wheel-speed scale; fast spins + latency need wide noise
         dth = (dtheta * sc * (1 + rng.normal(0, 0.2, n)) + p[:, 4] * d
-               + rng.normal(0, 0.01 + 0.02 * abs(dist) + 0.25 * abs(dtheta), n))
+               + rng.normal(0, 0.01 + 0.02 * np.abs(dist) + 0.25 * np.abs(dtheta), n))
         th = p[:, 2] + 0.5 * dth
         p[:, 0] += d * np.cos(th)
         p[:, 1] += d * np.sin(th)

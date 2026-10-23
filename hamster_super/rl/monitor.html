@@ -331,6 +331,7 @@ function renderReplay(s) {
     add('Model', 'iter ' + (s.model_iter ?? '–')); add('Maze', `${s.bounds[2] + 1}×${s.bounds[3] + 1} (Lv ${s.level})`);
     add('Time', s.time_s + ' s'); add('Shortest path', s.opt_cells + ' cells'); add('Wall contact', s.collisions);
     add('Localization', s.full_stack ? 'dead reckoning + particle filter' : 'ideal');
+    if (s.full_stack && s.est) add('Pose error', Math.hypot(s.pose[0] - s.est[0], s.pose[1] - s.est[1]).toFixed(1) + ' cm');
   }
   const h = $('hist'); h.replaceChildren();
   for (const r of (s.history || [])) {

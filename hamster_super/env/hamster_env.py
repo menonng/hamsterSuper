@@ -133,7 +133,7 @@ class HamsterMazeEnv(gym.Env):
             self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, None if race else m.goal,
                                   self.rays.r_min, race=race_mode,
                                   prior=m if self.cfg.known_map else None, rng=self.rng)
-            self.stack.odom.spec = self._calibrated_spec()
+            self.stack.set_odometry_spec(self._calibrated_spec())
         obs = self._observe()
         self.prev_pose = self.robot.pose
         return obs, {}
