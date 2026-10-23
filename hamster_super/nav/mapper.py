@@ -30,8 +30,19 @@ class BeliefMap:
             self.fixed = set(prior.walls)
         self._cache = None
         self.free_threshold = -1.0
+        self.seen: set = set()          # cells whose floor the camera has looked at
+        self.decay = 1.0                # < 1: forget old evidence (local map for racing)
+        self._free_cache, self._free_version = None, -1
         self.version = 0
         self._arrays, self._arrays_version = None, -1
+
+    @property
+    def free_edges(self) -> set:
+        """Edges the camera has seen through (observed open)."""
+        if self._free_cache is None or self._free_version != self.version:
+            self._free_cache = {e for e, sc in self.scores.items() if sc <= self.free_threshold}
+            self._free_version = self.version
+        return self._free_cache
 
     @property
     def walls(self) -> set:
@@ -77,7 +88,25 @@ class BeliefMap:
         if 0 <= i < arr.shape[0] and 0 <= j < arr.shape[1]:
             arr[i, j] = st
 
+    def forget(self):
+        """Shrink all evidence a little (decay < 1). Walls the camera keeps seeing
+        stay; walls drawn from an old, drifted pose estimate fade away instead of
+        misleading the robot for the rest of the run."""
+        if self.decay >= 1.0:
+            return
+        for e, sc in list(self.scores.items()):
+            ns = sc * self.decay
+            if abs(ns) < 0.05:
+                del self.scores[e]
+                ns = 0.0
+            else:
+                self.scores[e] = ns
+            if self._state(ns) != self._state(sc):
+                self._cache = None
+                self.version += 1
+
     def update(self, origin, heading: float, angles, ranges, max_range: float, r_min):
+        self.forget()
         ox, oy = float(origin[0]), float(origin[1])
         for a, r, rmin in zip(angles, ranges, r_min):
             dx, dy = math.cos(heading + a), math.sin(heading + a)
@@ -87,6 +116,8 @@ class BeliefMap:
                 # nothing closer than the blind zone is observed (the camera may even look
                 # over a wall there), so only the visible part of the ray clears edges
                 self._free_ray(ox, oy, dx, dy, free_until, start=rmin)
+                for t in np.arange(rmin, max(rmin, free_until), 2.0):
+                    self.seen.add((int(math.floor((ox + dx * t) / G)), int(math.floor((oy + dy * t) / G))))
             if hit:
                 d = r + WALL_THICKNESS / 2
                 e = self.snap(ox + dx * d, oy + dy * d)
@@ -139,6 +170,19 @@ class BeliefMap:
                 m = int(math.floor(q / G))
                 edge = ((k, m), (k, m + 1)) if vertical else ((m, k), (m + 1, k))
                 self._add(edge, -self.miss_gain)
+
+    def add_border(self):
+        """Races use the whole arena: its outer boundary is a known wall. Fixed
+        walls anchor the localizer globally (the inner lattice repeats every 9 cm)."""
+        x0, y0, x1, y1 = self.bounds
+        for i in range(x0, x1 + 1):
+            self.fixed.add(make_edge((i, y0), (i + 1, y0)))
+            self.fixed.add(make_edge((i, y1 + 1), (i + 1, y1 + 1)))
+        for j in range(y0, y1 + 1):
+            self.fixed.add(make_edge((x0, j), (x0, j + 1)))
+            self.fixed.add(make_edge((x1 + 1, j), (x1 + 1, j + 1)))
+        self._cache = None
+        self.version += 1
 
     def as_gridmap(self, start, goal) -> GridMap:
         return GridMap(set(self.walls), start, goal, None, self.bounds)

@@ -66,6 +66,9 @@ class GridMap:
     # dead end and back to the start; `goal` then holds the true dead end (used
     # only for rewards/evaluation, the robot has to find it itself).
     kind: str = "goal"
+    # race course: its cells in driving order (start ... finish) and the 2x2
+    # block each cell belongs to; used for rewards/evaluation only
+    course: list | None = None
 
     # ------------------------------------------------------------------ edits
     def add_wall(self, a: Point, b: Point):
@@ -151,4 +154,5 @@ class GridMap:
         return out
 
     def copy(self) -> "GridMap":
-        return GridMap(set(self.walls), self.start, self.goal, self.start_heading, self.bounds, self.name, self.kind)
+        return GridMap(set(self.walls), self.start, self.goal, self.start_heading, self.bounds, self.name, self.kind,
+                       None if self.course is None else list(self.course))

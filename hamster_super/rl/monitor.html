@@ -149,7 +149,7 @@ const CHARTS = [
   {key: 'ep_return', title: 'Mean episode return', f: fmt.f2},
   {key: 'finish_time', title: 'Finish time (successful episodes)', f: fmt.s, min: 0},
   {key: 'collisions', title: 'Wall-contact steps per episode', f: fmt.f1, min: 0},
-  {key: 'level', title: 'Curriculum level (0–8, course size)', f: v => 'Lv ' + v, min: 0, max: 8, step: true},
+  {key: 'level', title: 'Curriculum level (0–5: course 4×4 … 14×14)', f: v => 'Lv ' + v, min: 0, max: 5, step: true},
   {key: 'std', title: 'Policy exploration (std)', f: fmt.f3, min: 0},
 ];
 let rows = [], releasesData = [];

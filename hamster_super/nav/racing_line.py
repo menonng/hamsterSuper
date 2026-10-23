@@ -125,6 +125,7 @@ class RacingLine:
     def __init__(self, robot_radius: float = 2.3, margin: float = 0.3, uncertainty_gain: float = 1.5,
                  horizon: int = 10, lookahead=(4.0, 10.0)):
         self.base = WALL_THICKNESS / 2 + robot_radius + margin
+        self.min_clearance = WALL_THICKNESS / 2 + robot_radius + 0.05     # never closer than touching
         self.k = uncertainty_gain
         self.horizon = horizon
         self.lookahead = lookahead
@@ -132,8 +133,9 @@ class RacingLine:
         self.corners: list = []
         self.clearance = self.base
 
-    def update(self, planner, pos, sigma: float = 0.0):
-        """pos: estimated (x, y); sigma: position uncertainty (cm)."""
+    def update(self, planner, pos, sigma: float = 0.0, bias: float = 0.0):
+        """pos: estimated (x, y); sigma: position uncertainty (cm); bias in [-1, 1]:
+        the policy's own inside (-) / outside (+) choice, +-1.2 cm of clearance."""
         from ..maps.grid_map import cell_of
         c = cell_of(pos)
         goal = cell_center(planner.goal)
@@ -141,7 +143,8 @@ class RacingLine:
             self.line, self.corners = np.array([pos[:2], goal]), []
             return self.line
         cells = [c] + planner.next_cells(c, self.horizon)
-        self.clearance = min(self.base + self.k * sigma, HALF - 0.05)
+        self.clearance = float(np.clip(self.base + self.k * sigma + 1.2 * float(np.clip(bias, -1, 1)),
+                                       self.min_clearance, HALF - 0.05))
         portals = build_portals(cells, self.clearance)
         end = goal if cells[-1] == planner.goal else cell_center(cells[-1])
         self.line = funnel(np.asarray(pos[:2], float), end, portals)

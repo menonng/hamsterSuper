@@ -59,7 +59,7 @@ class Runtime:
             rays = self.perception.rays(frame)
         obs = self.stack.step(rays, ir, self.last_action)
         a = self.policy(obs)
-        a = np.asarray(a, dtype=float).reshape(-1)[:2]
+        a = np.asarray(a, dtype=float).reshape(-1)[:3]      # wheels + racing-line bias
         if self.stack.reached_goal():
             a = np.zeros(2)
             self.hw.stop()

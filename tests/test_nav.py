@@ -131,7 +131,7 @@ def test_roundtrip_finds_dead_end_and_returns():
     """Ideal-pose round trip with a simple waypoint follower on a generated track."""
     from hamster_super.config import DomainRandomization
     from hamster_super.env.hamster_env import HamsterMazeEnv
-    cfg = EnvConfig(lap_prob=0.0, roundtrip_prob=1.0, dr=DomainRandomization(enabled=False))
+    cfg = EnvConfig(course_prob=0.0, lap_prob=0.0, roundtrip_prob=1.0, dr=DomainRandomization(enabled=False))
     env = HamsterMazeEnv(cfg, level=2, seed=1)
     k = cfg.camera.n_rays + 2
     wins = 0
@@ -177,7 +177,7 @@ def test_circuit_generator_is_one_closed_lane():
 def test_one_lap_with_waypoint_follower():
     from hamster_super.config import DomainRandomization
     from hamster_super.env.hamster_env import HamsterMazeEnv
-    cfg = EnvConfig(lap_prob=1.0, dr=DomainRandomization(enabled=False))
+    cfg = EnvConfig(course_prob=0.0, lap_prob=1.0, dr=DomainRandomization(enabled=False))
     env = HamsterMazeEnv(cfg, level=3, seed=2)
     k = cfg.camera.n_rays + 2
     for _ in range(3):

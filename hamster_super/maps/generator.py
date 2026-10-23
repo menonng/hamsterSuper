@@ -9,7 +9,7 @@ from .grid_map import NEIGHBORS, GridMap, edge_between, make_edge
 
 # (min cells, max cells) per side for each curriculum level
 LEVELS = [(2, 3), (3, 4), (3, 6), (4, 8), (5, 10), (6, 12), (8, 14), (10, 16), (12, 20)]
-RACE_LEVEL = 7          # 10-16 cells per side: the real race courses (12 x 12 and up)
+RACE_LEVEL = 5          # race courses: 14 x 14 cells (COURSE_SIZES[5])
 STYLES = ("perfect", "braid", "rooms", "sparse")
 
 
@@ -179,6 +179,108 @@ def lap_order(m: GridMap) -> list:
             break
         prev, cur = cur, nxt[0]
     return order
+
+
+COURSE_SIZES = [4, 6, 8, 10, 12, 14]     # course side (cells) per curriculum level; races are 14 x 14
+COURSE_LEVELS = len(COURSE_SIZES)
+
+
+def _spanning_tree(m_, n_, rng, straight=0.65):
+    """Random spanning tree over every block, grown mostly straight (long straights)."""
+    root = (int(rng.integers(m_)), int(rng.integers(n_)))
+    nodes, edges, came, order = {root}, [], {root: None}, [root]
+    dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+    total = m_ * n_
+    while len(nodes) < total:
+        a = order[-1 - int(min(len(order) - 1, rng.exponential(2.0)))]
+        opts = [d for d in dirs if 0 <= a[0] + d[0] < m_ and 0 <= a[1] + d[1] < n_
+                and (a[0] + d[0], a[1] + d[1]) not in nodes]
+        if not opts:
+            # fall back to any node that can still grow
+            growable = [x for x in order if any(0 <= x[0] + d[0] < m_ and 0 <= x[1] + d[1] < n_
+                                                and (x[0] + d[0], x[1] + d[1]) not in nodes for d in dirs)]
+            a = growable[int(rng.integers(len(growable)))]
+            opts = [d for d in dirs if 0 <= a[0] + d[0] < m_ and 0 <= a[1] + d[1] < n_
+                    and (a[0] + d[0], a[1] + d[1]) not in nodes]
+        d = came[a] if came[a] in opts and rng.random() < straight else opts[int(rng.integers(len(opts)))]
+        b = (a[0] + d[0], a[1] + d[1])
+        nodes.add(b)
+        edges.append((a, b))
+        came[b] = d
+        order.append(b)
+    return nodes, edges
+
+
+def generate_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
+                    open_course: bool | None = None, wide_prob: float | None = None) -> GridMap:
+    """Race course that uses *every* cell of an N x N area (N = 14 for races).
+
+    * A spanning tree over all (N/2)^2 blocks of 2x2 cells is traced around:
+      one lane through all N^2 cells.
+    * Some leaf blocks (hairpins) are opened into 2x2 areas: wide sections
+      where the inside/outside line is a real choice.
+    * open_course: cut the loop at one point -> start and finish are the two
+      ends (one-way course); otherwise it is a circuit raced for one lap.
+    """
+    level = int(np.clip(level, 0, COURSE_LEVELS - 1))
+    size = COURSE_SIZES[level]
+    m_ = n_ = size // 2
+    # every map draws its own character: twisty (low) ... long straights (high)
+    straight = float(rng.uniform(0.2, 0.9))
+    nodes, edges = _spanning_tree(m_, n_, rng, straight=straight)
+    adj = _loop_cells(nodes, edges)
+    # loop order (driving direction chosen later)
+    first = min(adj)
+    order, prev, cur = [first], None, first
+    while True:
+        nxt = [c for c in sorted(adj[cur]) if c != prev]
+        prev, cur = cur, nxt[0]
+        if cur == first:
+            break
+        order.append(cur)
+    if rng.random() < 0.5:
+        order = order[:1] + order[1:][::-1]
+    n_cells = len(order)
+    open_course = bool(rng.random() < 0.5) if open_course is None else open_course
+    # walls: everything that is not a lane connection
+    walls = set()
+    for c, nb in adj.items():
+        for dx, dy in NEIGHBORS:
+            n = (c[0] + dx, c[1] + dy)
+            if n not in nb:
+                walls.add(edge_between(c, n))
+    # wide sections: open the inside of some leaf blocks (U-turns)
+    degree = {b: 0 for b in nodes}
+    for a, b in edges:
+        degree[a] += 1
+        degree[b] += 1
+    wide_prob = rng.uniform(0.2, 0.7) if wide_prob is None else wide_prob
+    block_of = lambda c: (c[0] // 2, c[1] // 2)
+    shift = int(rng.integers(n_cells))
+    order = order[shift:] + order[:shift]
+    if open_course:
+        cut = (order[-1], order[0])            # wall between the finish and the start
+    wide = []
+    for b in nodes:
+        if degree[b] == 1 and rng.random() < wide_prob:
+            if open_course and (block_of(cut[0]) == b or block_of(cut[1]) == b):
+                continue
+            i, j = b
+            cells = [(2 * i, 2 * j), (2 * i + 1, 2 * j), (2 * i + 1, 2 * j + 1), (2 * i, 2 * j + 1)]
+            for a_, b_ in zip(cells, cells[1:] + cells[:1]):
+                walls.discard(edge_between(a_, b_))
+            wide.append(b)
+    if open_course:
+        walls.add(edge_between(*cut))
+    kind = "oneway" if open_course else "lap"
+    m = GridMap(walls=walls, name=f"course-{size}x{size}-{kind}-wide{len(wide)}-s{straight:.2f}", kind=kind)
+    m.course = order
+    m.start = order[0]
+    d0 = (order[1][0] - order[0][0], order[1][1] - order[0][1])
+    m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]
+    m.goal = order[-1]                          # finish cell (one-way) / last cell before the line (lap)
+    m.bounds = (0, 0, size - 1, size - 1)
+    return m
 
 
 def generate(rng: np.random.Generator, level: int = 3, style: str | None = None) -> GridMap:

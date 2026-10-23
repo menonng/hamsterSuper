@@ -7,6 +7,12 @@ when the robot drives back into the start cell from the other side.
 mode "roundtrip": a single-path course with a dead end: drive to its dead
 end, then back to the start.
 
+mode "race" (default for real races): the robot does not know the course
+type. It follows the course; entering the start cell again from behind
+means a lap is done, reaching a dead end that is not the start means the
+end of a one-way course. Cells the camera has already looked at count as
+explored, so wide sections are crossed instead of swept.
+
 There is no destination given. On the way out the planner's goal is the
 nearest cell not visited yet (extended straight ahead into unknown space so
 the racing line stays long and the robot keeps its speed). A visited cell,
@@ -31,6 +37,16 @@ class RoundTrip:
                  mode: str = "roundtrip", start_heading: float | None = None):
         self.mode = mode
         self.start = tuple(start_cell)
+        # only recently visited cells count as visited (a drifted pose must not make
+        # the robot think the lane ahead was already driven); 0 = remember forever
+        self.recent_window = 0
+        self.t = 0
+        self.last_visit = {self.start: 0}
+        self.cells_driven = 0                      # cell changes since the start
+        self.min_lap_cells = 4                     # no finish (lap or dead end) before this many cells
+        # races use every cell of the arena: a finish is only believed after the robot
+        # has driven through most of it (a drifted pose cannot fake an early finish)
+        self.min_coverage = 0
         self.prev_cell = self.start
         self.ahead = None
         if start_heading is not None:
@@ -42,6 +58,7 @@ class RoundTrip:
         self.extend = extend
         self.dead_end_dist = dead_end_dist
         self.turn_cell = None
+        self.front_confirm = 9.0                   # cm: end wall must be seen this close
 
     def in_bounds(self, c):
         x0, y0, x1, y1 = self.bounds
@@ -61,13 +78,20 @@ class RoundTrip:
                      or edge_between(c, (c[0] + dx, c[1] + dy)) in walls)
         return closed >= 3
 
-    def goal(self, cell, pos, heading, walls):
-        """Update the phase and return the cell the planner should head for."""
+    def goal(self, cell, pos, heading, walls, seen=None, free=None, front=None):
+        """Update the phase and return the cell the planner should head for.
+        front: distance (cm) to the nearest wall straight ahead measured right now
+        (camera / IR); a dead end only counts when the sensors confirm it."""
         cell = tuple(cell)
-        if self.mode == "lap":
-            return self._lap_goal(cell, heading, walls)
+        self.t += 1
+        self.front = front
+        self.seen = seen if seen is not None else set()
+        self.free = free if free is not None else set()
+        if self.mode in ("lap", "race"):
+            return self._lap_goal(cell, heading, walls, pos)
         if self.in_bounds(cell):
             self.visited.add(cell)
+            self.last_visit[cell] = self.t
         if self.phase == OUT:
             near_centre = np.linalg.norm(np.asarray(pos[:2]) - cell_center(cell)) < self.dead_end_dist
             if near_centre and self.is_dead_end(cell, walls):
@@ -79,28 +103,69 @@ class RoundTrip:
             self.phase = DONE
         return self.start
 
-    def _lap_goal(self, cell, heading, walls):
+    def recent(self, c) -> bool:
+        if c not in self.last_visit:
+            return False
+        return self.recent_window <= 0 or self.t - self.last_visit[c] <= self.recent_window
+
+    def _lap_goal(self, cell, heading, walls, pos=None):
         came_from = self.prev_cell
         if cell != self.prev_cell:
             self.prev_cell = cell
+            self.cells_driven += 1
         if self.phase == DONE:
             return self.start
-        if cell == self.start and len(self.visited) >= 4 and came_from not in (self.start, self.ahead):
+        covered = len(self.visited) >= max(4, self.min_coverage)
+        if cell == self.start and self.cells_driven >= self.min_lap_cells and covered \
+                and came_from not in (self.start, self.ahead):
             self.phase = DONE                      # entered the start cell from behind: lap complete
             return self.start
         if self.in_bounds(cell):
             self.visited.add(cell)
+            self.last_visit[cell] = self.t
+        if self.mode == "race" and cell != self.start and self.cells_driven >= self.min_lap_cells and covered \
+                and pos is not None \
+                and self.is_dead_end(cell, walls) \
+                and (getattr(self, "front", None) is None or self.front < self.front_confirm) \
+                and np.linalg.norm(np.asarray(pos[:2]) - cell_center(cell)) < self.dead_end_dist:
+            self.phase, self.turn_cell = DONE, cell   # end of a one-way course: finished
+            return cell
         # closing the lap: the start is the next cell straight ahead and nothing blocks it
-        if len(self.visited) >= 4 and cell != self.start:
+        if self.cells_driven >= self.min_lap_cells and len(self.visited) >= 4 and cell != self.start:
             dx, dy = self.start[0] - cell[0], self.start[1] - cell[1]
             if abs(dx) + abs(dy) == 1 and edge_between(cell, self.start) not in walls \
                     and dx * math.cos(heading) + dy * math.sin(heading) > 0.5:
                 return self.start
-        target = self._explore_target(cell, heading, walls)
+        # the course runs forward from the start: never explore through the start's back side
+        behind = self._behind()
+        explore_walls = walls | {edge_between(self.start, behind)} if behind is not None else walls
+        target = self._explore_target(cell, heading, explore_walls)
         if self.phase == BACK:                     # nothing unvisited left: head for the start
             self.phase = OUT
             return self.start
         return target
+
+    def _passed_by(self, c, walls) -> bool:
+        """In a wide section the robot drives past cells without entering them.
+        Such a cell counts as explored when the camera has seen it and it shares
+        an open 2x2 square (all four inner edges observed free) with a visited
+        cell. In a one-cell lane there is no open square, so the cells ahead
+        still have to be driven into; a dead end always has to be entered."""
+        if c not in getattr(self, "seen", ()) or self.is_dead_end(c, walls):
+            return False
+        free = getattr(self, "free", ())
+        for ox in (c[0] - 1, c[0]):
+            for oy in (c[1] - 1, c[1]):
+                sq = [(ox, oy), (ox + 1, oy), (ox + 1, oy + 1), (ox, oy + 1)]
+                inner = [edge_between(a, b) for a, b in zip(sq, sq[1:] + sq[:1])]
+                if all(e in free for e in inner) and any(self.recent(x) for x in sq if x != c):
+                    return True
+        return False
+
+    def _behind(self):
+        if self.ahead is None:
+            return None
+        return (2 * self.start[0] - self.ahead[0], 2 * self.start[1] - self.ahead[1])
 
     def _explore_target(self, cell, heading, walls):
         """Nearest unvisited cell (ties: straight ahead first), then extended straight on."""
@@ -111,7 +176,8 @@ class RoundTrip:
         best = None
         while q:
             c = q.popleft()
-            if c not in self.visited:
+            explored = self.recent(c) or self._passed_by(c, walls)
+            if not explored:
                 # prefer targets reached by first moving forward rather than turning back
                 f = first[c]
                 penalty = 0 if f == fwd else (2 if f is not None and f == (-fwd[0], -fwd[1]) else 1)
@@ -136,7 +202,7 @@ class RoundTrip:
                 step = (target[0] - n[0], target[1] - n[1])
         for _ in range(self.extend if step else 0):
             n = (prev[0] + step[0], prev[1] + step[1])
-            if not self.in_bounds(n) or edge_between(prev, n) in walls or n in self.visited:
+            if not self.in_bounds(n) or edge_between(prev, n) in walls or self.recent(n):
                 break
             prev = n
         return prev

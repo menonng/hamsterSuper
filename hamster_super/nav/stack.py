@@ -44,9 +44,19 @@ def cam_origin(cfg: EnvConfig, pose) -> np.ndarray:
     return np.array([x, y]) + cfg.camera.mount_forward * np.array([math.cos(th), math.sin(th)])
 
 
+def front_distance(rays, ir, r_min=None) -> float:
+    """Nearest wall straight ahead (cm) from the middle camera rays and the IR."""
+    rays = np.asarray(rays)
+    k = len(rays) // 2
+    d = float(np.min(rays[k - 1:k + 2]))
+    if len(ir) and float(np.max(ir)) > 0.2:
+        d = min(d, 3.0)
+    return d
+
+
 class NavStack:
     def __init__(self, cfg: EnvConfig, bounds, start_pose, goal, r_min, prior: GridMap | None = None,
-                 localize: bool = True, delay_steps: int = 1, rng=None, race: str = "lap"):
+                 localize: bool = True, delay_steps: int = 1, rng=None, race: str = "race"):
         self.cfg = cfg
         self.angles = cfg.camera.ray_angles()
         self.r_min = np.asarray(r_min)
@@ -56,6 +66,15 @@ class NavStack:
         self.roundtrip = (RoundTrip(cell_of(start_pose), bounds, mode=race, start_heading=float(start_pose[2]))
                           if goal is None else None)
         self.planner = Planner(bounds, goal if goal is not None else cell_of(start_pose))
+        if self.roundtrip is not None and race == "race":
+            # racing: a local map (old, drift-corrupted walls fade) and recent-visit memory
+            self.belief.decay = cfg.race_map_decay
+            if cfg.race_border:
+                self.belief.add_border()
+            self.roundtrip.recent_window = cfg.race_recent_steps
+            x0, y0, x1, y1 = bounds
+            self.roundtrip.min_lap_cells = max(4, int(0.6 * (x1 - x0 + 1) * (y1 - y0 + 1)))   # courses fill the arena
+            self.roundtrip.min_coverage = int(cfg.race_min_coverage * (x1 - x0 + 1) * (y1 - y0 + 1))
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
@@ -94,12 +113,15 @@ class NavStack:
             self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
             self.belief.update_ir(pose, ir, cfg.robot)
         if self.roundtrip is not None:
-            self.planner.set_goal(self.roundtrip.goal(cell_of(pose), pose, pose[2], self.belief.walls))
+            self.planner.set_goal(self.roundtrip.goal(cell_of(pose), pose, pose[2], self.belief.walls,
+                                                      seen=self.belief.seen, free=self.belief.free_edges,
+                                                      front=front_distance(rays, ir)))
         self.planner.update(self.belief.walls, cell_of(pose))
-        self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0)
+        bias = float(last_action[2]) if len(last_action) > 2 else 0.0      # learned inside/outside line choice
+        self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0, bias=bias)
         self.wp = self.line.waypoints()
         self.prev_action = np.asarray(last_action, dtype=float)
-        return build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action)
+        return build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action[:2])
 
     def wall_points(self, rays, ir) -> np.ndarray:
         """Wall-centerline points in the robot frame from camera rays + IR."""

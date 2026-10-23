@@ -24,7 +24,7 @@ import torch.nn as nn
 
 from ..config import EnvConfig, save_json, to_dict
 from ..env.vec_env import VecEnv
-from ..maps.generator import LEVELS, RACE_LEVEL
+from ..maps.generator import COURSE_LEVELS, LEVELS, RACE_LEVEL
 from ..nav.stack import obs_dim
 from .evaluate import evaluate, load_maps
 from .policy import ActorCritic, DeployPolicy, RunningNorm, export_numpy
@@ -50,7 +50,7 @@ class PPOConfig:
 class Curriculum:
     """Promote to the next map level when the recent success rate at the current level is high."""
 
-    def __init__(self, level=0, window=200, promote_at=0.8):
+    def __init__(self, level=0, window=150, promote_at=0.7):
         self.level, self.window, self.promote_at = level, window, promote_at
         self.hist = deque(maxlen=window)
 
@@ -59,7 +59,7 @@ class Curriculum:
             return False
         self.hist.append(float(info["success"]))
         if (len(self.hist) == self.window and np.mean(self.hist) >= self.promote_at
-                and self.level < len(LEVELS) - 1):
+                and self.level < COURSE_LEVELS - 1):
             self.level += 1
             self.hist.clear()
             return True
@@ -76,7 +76,8 @@ class Trainer:
         torch.manual_seed(args.seed)
         torch.set_num_threads(max(1, args.torch_threads))
         self.n_obs = obs_dim(self.cfg)
-        self.ac = ActorCritic(self.n_obs, 2, self.ppo.hidden)
+        self.n_act = 3            # left wheel, right wheel, racing-line bias (inside/outside)
+        self.ac = ActorCritic(self.n_obs, self.n_act, self.ppo.hidden)
         self.opt = torch.optim.Adam(self.ac.parameters(), lr=self.ppo.lr, eps=1e-5)
         self.norm = RunningNorm(self.n_obs)
         self.cur = Curriculum(level=args.start_level)
@@ -110,7 +111,7 @@ class Trainer:
     def state(self):
         return {"model": self.ac.state_dict(), "opt": self.opt.state_dict(), "obs_norm": self.norm.state_dict(),
                 "iter": self.iter, "episodes": self.episodes, "level": self.cur.level,
-                "obs_dim": self.n_obs, "act_dim": 2, "hidden": self.ppo.hidden,
+                "obs_dim": self.n_obs, "act_dim": self.n_act, "hidden": self.ppo.hidden,
                 "env_config": to_dict(self.cfg)}
 
     def save(self, path):
@@ -121,8 +122,20 @@ class Trainer:
 
     def load(self, path):
         ck = torch.load(path, map_location="cpu", weights_only=False)
-        self.ac.load_state_dict(ck["model"])
-        self.opt.load_state_dict(ck["opt"])
+        if ck.get("act_dim", 2) < self.n_act:
+            # older 2-action policy: keep everything, add a neutral line-bias output
+            sd = ck["model"]
+            last = max(k for k in sd if k.startswith("actor.") and k.endswith(".weight"))
+            bk = last.replace(".weight", ".bias")
+            extra = self.n_act - sd[last].shape[0]
+            sd[last] = torch.cat([sd[last], torch.zeros(extra, sd[last].shape[1])])
+            sd[bk] = torch.cat([sd[bk], torch.zeros(extra)])
+            sd["log_std"] = torch.cat([sd["log_std"], torch.full((extra,), -0.5)])
+            self.ac.load_state_dict(sd)
+            print(f"expanded {path} from {ck.get('act_dim', 2)} to {self.n_act} actions (optimizer reset)")
+        else:
+            self.ac.load_state_dict(ck["model"])
+            self.opt.load_state_dict(ck["opt"])
         self.norm.load_state_dict(ck["obs_norm"])
         self.iter, self.episodes = ck["iter"], ck.get("episodes", 0)
         self.cur.level = ck.get("level", self.cur.level)
@@ -151,7 +164,7 @@ class Trainer:
             while self.iter < a.iters:
                 it_t = time.time()
                 buf_o = np.zeros((T, N, self.n_obs), np.float32)
-                buf_a = np.zeros((T, N, 2), np.float32)
+                buf_a = np.zeros((T, N, self.n_act), np.float32)
                 buf_lp = np.zeros((T, N), np.float32)
                 buf_v = np.zeros((T, N), np.float32)
                 buf_r = np.zeros((T, N), np.float32)
@@ -336,7 +349,7 @@ def main():
     ap.add_argument("--start-level", type=int, default=0)
     ap.add_argument("--set-level", type=int, default=None, help="override the curriculum level after --resume")
     ap.add_argument("--known-map", action="store_true", help="the planner knows the full map")
-    ap.add_argument("--full-stack-prob", type=float, default=1.0,
+    ap.add_argument("--full-stack-prob", type=float, default=0.5,
                     help="fraction of episodes driven with odometry + particle-filter localization")
     ap.add_argument("--out", default="runs/ppo")
     ap.add_argument("--resume", default=None)

@@ -93,15 +93,15 @@ class GridSnapLocalizer:
 class LatticeParticleFilter:
     """Monte Carlo localization against the 9 cm wall lattice.
 
-    State per particle: x, y, heading, a speed scale (the Hamster's real
-    speed is unknown to +-30% and changes with battery/floor) and a curvature
+    State per particle: x, y, heading, a speed scale (the real speed differs
+    from the calibrated one by battery/floor, about +-12%) and a curvature
     bias from left/right wheel imbalance; both are learned online. Motion uses the
     odometry increment scaled per particle plus noise (covers slip, wheel
     imbalance and being pinned against a wall). Measurement: wall points seen
     by the camera / IR must lie on a grid line x = 9i or y = 9j.
     """
 
-    def __init__(self, pose, n: int = 256, scale_range=(0.7, 1.3), sigma_hit: float = 0.8,
+    def __init__(self, pose, n: int = 256, scale_range=(0.88, 1.12), sigma_hit: float = 0.8,
                  rng: np.random.Generator | None = None):
         self.rng = rng or np.random.default_rng()
         self.n = n
