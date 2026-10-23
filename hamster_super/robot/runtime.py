@@ -10,6 +10,7 @@ from ..config import EnvConfig
 from ..maps.grid_map import GridMap, cell_center, cell_of
 from ..nav.stack import NavStack
 from ..sim.sensors import DepthRays
+from ..rl.monitor import line_info
 from .perception import Perception
 
 
@@ -126,6 +127,7 @@ class Runtime:
                 "true_walls": ([[list(a), list(b)] for a, b in getattr(self.hw, "map").walls]
                                if hasattr(self.hw, "map") else None),
                 "path": [list(x) for x in cells],
+                **line_info(self.stack.line),
                 "rays": np.asarray(self.rays).tolist(),
                 "ray_angles": self.cfg.camera.ray_angles().tolist(),
                 "cam_forward": self.cfg.camera.mount_forward,

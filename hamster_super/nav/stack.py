@@ -16,6 +16,7 @@ from ..maps.grid_map import GridMap, cell_of
 from .localizer import LatticeParticleFilter, Odometry, wall_orientation
 from .mapper import BeliefMap
 from .planner import Planner
+from .racing_line import RacingLine
 
 WP_CLIP = 3.0
 
@@ -55,6 +56,7 @@ class NavStack:
         self.prev_action = np.zeros(2)
         self.wp = (None, None)
         self.loc_range = 35.0
+        self.line = RacingLine(robot_radius=cfg.robot.collision_radius)
 
     @property
     def pose(self):
@@ -82,7 +84,8 @@ class NavStack:
         self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
         self.belief.update_ir(pose, ir, cfg.robot)
         self.planner.update(self.belief.walls, cell_of(pose))
-        self.wp = self.planner.waypoints(pose)
+        self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0)
+        self.wp = self.line.waypoints()
         self.prev_action = np.asarray(last_action, dtype=float)
         return build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action)
 

@@ -28,7 +28,7 @@ class RobotSpec:
     body_height: float = 3.0         # cm (approximate; measure the real robot)
     collision_radius: float = 2.3    # cm, circular collision approximation
     track_width: float = 3.0         # cm, distance between the left and right wheels
-    max_speed: float = 20.0          # cm/s at wheel command 100 (calibrate)
+    max_speed: float = 10.0          # cm/s at wheel command 100 (measured on the real robot)
     motor_tau: float = 0.06          # s, motor response time constant
     ir_range: float = 6.0            # cm, effective range of the IR proximity sensors
     ir_angle: float = math.radians(25)  # IR sensor mounting angle (left/right)
@@ -70,7 +70,7 @@ class DomainRandomization:
     """Range of real-world disturbances injected during training."""
     enabled: bool = True
     wheel_gain: tuple = (0.92, 1.08)       # per-wheel speed gain (left/right imbalance)
-    max_speed: tuple = (14.0, 26.0)        # cm/s
+    max_speed: tuple = (8.5, 11.5)         # cm/s (real top speed 10 cm/s, battery/floor variation)
     motor_tau: tuple = (0.02, 0.15)
     action_delay_steps: tuple = (0, 2)     # camera/communication latency (in steps)
     track_width: tuple = (2.7, 3.3)

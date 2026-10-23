@@ -142,6 +142,7 @@ class Replay:
                     "start": list(m.start), "goal": list(m.goal),
                     "pose": pose.tolist(), "est": est.tolist(),
                     "trail": trail, "est_trail": est_trail, "path": path,
+                    **line_info(env.line),
                     "rays": np.asarray(env.last_rays).tolist(),
                     "ray_angles": env.cfg.camera.ray_angles().tolist(),
                     "cam_forward": env.cfg.camera.mount_forward,
@@ -161,6 +162,14 @@ class Replay:
     def snapshot(self):
         with self.lock:
             return {**self.frame, "history": list(self.history)}
+
+
+def line_info(line) -> dict:
+    """Racing line + per-corner inside/outside call for the dashboard."""
+    if line is None or line.line is None:
+        return {"line": [], "corners": []}
+    return {"line": [[round(float(x), 2), round(float(y), 2)] for x, y in line.line],
+            "corners": line.corners, "clearance": round(float(line.clearance), 2)}
 
 
 def camera_info(cfg) -> dict:

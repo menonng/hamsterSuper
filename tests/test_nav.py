@@ -85,3 +85,43 @@ def test_particle_filter_tracks_unknown_speed():
         pf.update(st.wall_points(rays.true_ranges(true, boxes), np.zeros(2)), st.belief)
     assert abs(pf.pose[1] - true[1]) < 1.0       # lateral locked by the side walls
     assert abs(pf.pose[2]) < math.radians(5)
+
+
+def _min_wall_distance(line, boxes):
+    worst = np.inf
+    for a, b in zip(line[:-1], line[1:]):
+        for t in np.linspace(0, 1, 60):
+            p = a + (b - a) * t
+            cx = np.clip(p[0], boxes[:, 0], boxes[:, 2])
+            cy = np.clip(p[1], boxes[:, 1], boxes[:, 3])
+            worst = min(worst, float(np.min(np.hypot(p[0] - cx, p[1] - cy))))
+    return worst
+
+
+def test_racing_line_cuts_corners_but_clears_walls():
+    from hamster_super.maps.grid_map import cell_center
+    from hamster_super.nav.racing_line import RacingLine
+    for f in ["maps/example_01_s_curve.txt", "maps/example_02_maze.txt", "maps/example_03_open_arena.txt"]:
+        m = load_map(f)
+        p = Planner(m.cell_bounds(), m.goal)
+        p.update(m.walls)
+        rl = RacingLine(horizon=60)
+        line = rl.update(p, cell_center(m.start), sigma=0.0)
+        length = float(np.sum(np.linalg.norm(np.diff(line, axis=0), axis=1)))
+        centre = 9.0 * (len(m.shortest_path()) - 1)
+        assert length < centre, f
+        assert _min_wall_distance(line, m.wall_boxes()) > 2.3, f      # robot radius
+        assert all(c["label"] in ("in", "mid", "out") for c in rl.corners)
+
+
+def test_racing_line_backs_off_when_uncertain():
+    from hamster_super.maps.grid_map import cell_center
+    from hamster_super.nav.racing_line import RacingLine
+    m = load_map("maps/example_01_s_curve.txt")
+    p = Planner(m.cell_bounds(), m.goal)
+    p.update(m.walls)
+    sure, unsure = RacingLine(horizon=60), RacingLine(horizon=60)
+    sure.update(p, cell_center(m.start), sigma=0.0)
+    unsure.update(p, cell_center(m.start), sigma=1.0)
+    assert _min_wall_distance(unsure.line, m.wall_boxes()) > _min_wall_distance(sure.line, m.wall_boxes()) + 1.0
+    assert all(b["t"] > a["t"] for a, b in zip(sure.corners, unsure.corners))

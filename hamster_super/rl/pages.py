@@ -38,7 +38,7 @@ def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_sta
     """Run one episode and return a compact, JSON-friendly recording."""
     from ..env.hamster_env import HamsterMazeEnv
     from ..maps.grid_map import cell_of
-    from .monitor import camera_info
+    from .monitor import camera_info, line_info
 
     env = HamsterMazeEnv(cfg, level=level, seed=seed, full_stack=full_stack)
     obs, _ = env.reset(options={"level": level})
@@ -60,7 +60,7 @@ def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_sta
         pose, est = env.robot.pose, np.asarray(env.est)
         frames.append({"p": [round(float(pose[0]), 2), round(float(pose[1]), 2), round(float(pose[2]), 3)],
                        "e": [round(float(est[0]), 2), round(float(est[1]), 2), round(float(est[2]), 3)],
-                       "r": r1(env.last_rays), "c": path, "k": env.collisions})
+                       "r": r1(env.last_rays), "c": path, "k": env.collisions, **line_info(env.line)})
         t += 1
     return {
         "model_iter": model_iter, "level": level, "map_name": m.name, "bounds": list(env.bounds),

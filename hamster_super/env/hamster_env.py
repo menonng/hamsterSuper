@@ -12,6 +12,7 @@ from ..maps.generator import generate
 from ..maps.grid_map import GridMap, cell_center, cell_of
 from ..nav.mapper import BeliefMap
 from ..nav.planner import Planner
+from ..nav.racing_line import RacingLine
 from ..nav.stack import NavStack, build_obs, cam_origin, obs_dim
 from ..sim.robot import SimRobot, wrap
 from ..sim.sensors import DepthRays
@@ -77,6 +78,7 @@ class HamsterMazeEnv(gym.Env):
         self.pose_err = np.zeros(3)
         self.belief = BeliefMap(self.bounds, prior=m if self.cfg.known_map else None)
         self.planner = Planner(self.bounds, m.goal)
+        self.line = RacingLine(robot_radius=self.cfg.robot.collision_radius)
         self.use_stack = self.full_stack or (self.rng.random() < self.cfg.full_stack_prob)
         if self.use_stack:
             self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, m.goal, self.rays.r_min,
@@ -121,6 +123,7 @@ class HamsterMazeEnv(gym.Env):
             self.belief, self.planner = self.stack.belief, self.stack.planner
             self.est = self.stack.pose.copy()
             self.wp = self.stack.wp
+            self.line = self.stack.line
             return obs
         est = self._est_pose()
         self.est = est
@@ -128,7 +131,9 @@ class HamsterMazeEnv(gym.Env):
                            cfg.camera.max_range, self.rays.r_min)
         self.belief.update_ir(est, ir, cfg.robot)
         self.planner.update(self.belief.walls, cell_of(est))
-        self.wp = self.planner.waypoints(est)
+        # the localization error the planner would report (in the full stack: particle spread)
+        self.line.update(self.planner, est, sigma=float(np.linalg.norm(self.pose_err[:2])) * 0.5 + 0.2)
+        self.wp = self.line.waypoints()
         return build_obs(cfg, rays, ir, est, self.wp[0], self.wp[1], self.prev_action)
 
     # ------------------------------------------------------------------- step

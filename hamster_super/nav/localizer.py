@@ -198,6 +198,13 @@ class LatticeParticleFilter:
         return np.array([np.sum(w * self.p[:, 0]), np.sum(w * self.p[:, 1]), th])
 
     @property
+    def spread(self) -> float:
+        """Position uncertainty (cm): weighted std of the particle cloud."""
+        w, p = self.w, self.p
+        mx, my = np.sum(w * p[:, 0]), np.sum(w * p[:, 1])
+        return float(math.sqrt(np.sum(w * ((p[:, 0] - mx) ** 2 + (p[:, 1] - my) ** 2))))
+
+    @property
     def scale(self) -> float:
         return float(np.sum(self.w * self.p[:, 3]))
 

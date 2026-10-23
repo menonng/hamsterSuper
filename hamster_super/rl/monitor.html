@@ -100,7 +100,8 @@
       <div class="legend">
         <span><i class="sw" id="swTrue" style="background:var(--truewall);opacity:.5"></i><span id="lgTrue">Actual walls</span></span>
         <span><i class="sw" style="background:var(--blue)"></i><span id="lgFound">Walls the robot found</span></span>
-        <span><i class="sw" style="background:var(--green)"></i>Planned path</span>
+        <span><i class="sw" style="background:var(--green)"></i>Racing line</span>
+        <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT corner</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
         <span><i class="sw" style="background:var(--orange)"></i>Estimated pose</span>
         <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
@@ -267,6 +268,7 @@ function renderReleases() {
 // ----- live replay
 const cv = $('maze'), ctx = cv.getContext('2d');
 let lastReplay = null;
+const CORNER = {in: {text: 'IN', bg: '--sky'}, mid: {text: 'MID', bg: '--yellow'}, out: {text: 'OUT', bg: '--orange'}};
 function drawMaze(s) {
   ctx.clearRect(0, 0, cv.width, cv.height);
   if (!s || !s.bounds) {
@@ -286,10 +288,21 @@ function drawMaze(s) {
   walls(s.walls, css('--blue'), 1, Math.max(3, 0.5 * sc));
   const cell = (c, col) => { ctx.fillStyle = col; ctx.globalAlpha = .8; ctx.fillRect(X(c[0] * G + 2), Y(c[1] * G + 7), 5 * sc, 5 * sc); ctx.globalAlpha = 1; };
   cell(s.start, css('--yellow')); cell(s.goal, css('--red'));
-  if (s.path && s.path.length) {
+  if (s.line && s.line.length > 1) {          // racing line
+    ctx.strokeStyle = css('--green'); ctx.lineWidth = 2.5; ctx.beginPath();
+    s.line.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke();
+  } else if (s.path && s.path.length) {
     ctx.strokeStyle = css('--green'); ctx.lineWidth = 2.5; ctx.setLineDash([6, 6]); ctx.beginPath();
     ctx.moveTo(X(s.est[0]), Y(s.est[1])); for (const c of s.path.slice(1)) ctx.lineTo(X((c[0] + .5) * G), Y((c[1] + .5) * G));
     ctx.stroke(); ctx.setLineDash([]);
+  }
+  for (const c of (s.corners || [])) {        // inside / outside call per corner
+    const lab = CORNER[c.label]; if (!lab) continue;
+    const cx = X((c.cell[0] + .5) * G), cy = Y((c.cell[1] + .5) * G);
+    ctx.font = '600 11px system-ui'; const w = ctx.measureText(lab.text).width + 10;
+    ctx.fillStyle = css(lab.bg); ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - 9, w, 18, 9); ctx.fill();
+    ctx.fillStyle = '#1B2A5E'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(lab.text, cx, cy + 0.5);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
   const trail = (t, col) => { if (!t || t.length < 2) return; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
     t.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke(); };
@@ -382,7 +395,7 @@ function playStep() {
     model_iter: ep.model_iter, level: ep.level, bounds: ep.bounds, true_walls: ep.true_walls,
     walls: [...wallSet.values()], start: ep.start, goal: ep.goal,
     pose: f.p, est: f.e, rays: f.r, ray_angles: ep.ray_angles, cam_forward: ep.cam_forward,
-    path: f.c, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack, cam: ep.cam,
+    path: f.c, line: f.line, corners: f.corners, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack, cam: ep.cam,
     time_s: ((stepIdx + 1) * ep.dt).toFixed(1), opt_cells: ep.opt_cells, collisions: f.k,
     history: episodes.map(e => e.result),
   });
@@ -520,7 +533,7 @@ function init() {
   const rays = new THREE.LineSegments(rayGeo, new THREE.LineBasicMaterial({transparent: true, opacity: .8}));
   const pathGeo = new THREE.BufferGeometry();
   pathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(200 * 3), 3));
-  const path = new THREE.Line(pathGeo, new THREE.LineDashedMaterial({dashSize: 1.5, gapSize: 1.2}));
+  const path = new THREE.Line(pathGeo, new THREE.LineBasicMaterial());
   const trailGeo = new THREE.BufferGeometry();
   trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(5000 * 3), 3));
   const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial());
@@ -537,6 +550,8 @@ function init() {
     ghost = makeRobot(col('--orange'), true);
     scene.add(robot, ghost);
     mapKey = null; foundKey = '';
+    for (const k in tagTex) delete tagTex[k];
+    tagKey = '';
   }
 
   function buildMap(s) {
@@ -621,7 +636,9 @@ function init() {
       pa.set([cx, 0.15, -cy, cx + r * Math.cos(a), 0.15, -(cy + r * Math.sin(a))], k); k += 6; });
     rayGeo.setDrawRange(0, s.rays.length * 2); rayGeo.attributes.position.needsUpdate = true;
     const pp = pathGeo.attributes.position.array; k = 0;
-    const pts = s.path && s.path.length ? [[s.est[0], s.est[1]], ...s.path.slice(1).map(c => [(c[0] + .5) * G, (c[1] + .5) * G])] : [];
+    const pts = s.line && s.line.length > 1 ? s.line
+      : s.path && s.path.length ? [[s.est[0], s.est[1]], ...s.path.slice(1).map(c => [(c[0] + .5) * G, (c[1] + .5) * G])] : [];
+    updateCornerTags(s.corners || []);
     pts.slice(0, 200).forEach(q => { pp.set([q[0], 0.3, -q[1]], k); k += 3; });
     pathGeo.setDrawRange(0, Math.min(pts.length, 200)); pathGeo.attributes.position.needsUpdate = true;
     path.computeLineDistances();
@@ -630,6 +647,33 @@ function init() {
     trailGeo.setDrawRange(0, tr.length); trailGeo.attributes.position.needsUpdate = true;
     ghost.visible = !!est && camMode !== 'robot';
     if (est) { ghost.position.copy(V(est[0], est[1])); ghost.rotation.y = est[2]; }
+  }
+
+  // corner tags (IN / MID / OUT) floating above turning cells
+  const tagGroup = new THREE.Group(); scene.add(tagGroup);
+  const tagTex = {};
+  let tagKey = '';
+  function tagMaterial(label) {
+    if (tagTex[label]) return tagTex[label];
+    const lab = {in: ['IN', '--sky'], mid: ['MID', '--yellow'], out: ['OUT', '--orange']}[label];
+    const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = css(lab[1]); g.beginPath(); g.roundRect(4, 8, 120, 48, 24); g.fill();
+    g.fillStyle = '#1B2A5E'; g.font = '700 30px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(lab[0], 64, 33);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    return (tagTex[label] = new THREE.SpriteMaterial({map: tex, depthTest: false}));
+  }
+  function updateCornerTags(corners) {
+    const key = JSON.stringify(corners.map(c => [c.cell, c.label]));
+    if (key === tagKey) return;
+    tagKey = key; tagGroup.clear();
+    for (const c of corners) {
+      if (!['in', 'mid', 'out'].includes(c.label)) continue;
+      const sp = new THREE.Sprite(tagMaterial(c.label));
+      sp.position.copy(V((c.cell[0] + .5) * G, (c.cell[1] + .5) * G, 6)); sp.scale.set(5, 2.5, 1);
+      tagGroup.add(sp);
+    }
   }
 
   const hint = document.getElementById('hint3d');
