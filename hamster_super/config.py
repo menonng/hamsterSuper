@@ -94,7 +94,8 @@ class EnvConfig:
     steps_per_cell: int = 40               # timeout = steps_per_cell * shortest path cells + 100
     known_map: bool = False                # True: the planner knows the full map in advance
     full_stack_prob: float = 0.0           # fraction of episodes using odometry + particle filter
-    roundtrip_prob: float = 0.8            # fraction of generated maps that are single-path round-trip courses
+    lap_prob: float = 0.8                  # fraction of generated maps that are closed circuits (the race: one lap)
+    roundtrip_prob: float = 0.0            # fraction that are single-path courses (to the dead end and back)
     # Reward
     r_progress: float = 0.1                # per cm of progress
     r_goal: float = 10.0

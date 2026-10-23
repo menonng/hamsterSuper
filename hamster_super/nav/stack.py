@@ -46,13 +46,15 @@ def cam_origin(cfg: EnvConfig, pose) -> np.ndarray:
 
 class NavStack:
     def __init__(self, cfg: EnvConfig, bounds, start_pose, goal, r_min, prior: GridMap | None = None,
-                 localize: bool = True, delay_steps: int = 1, rng=None):
+                 localize: bool = True, delay_steps: int = 1, rng=None, race: str = "lap"):
         self.cfg = cfg
         self.angles = cfg.camera.ray_angles()
         self.r_min = np.asarray(r_min)
         self.belief = BeliefMap(bounds, prior=prior)
-        # goal=None: round trip (find the course's dead end, then return to the start)
-        self.roundtrip = RoundTrip(cell_of(start_pose), bounds) if goal is None else None
+        # goal=None: race without a destination - "lap" (one lap of a closed circuit)
+        # or "roundtrip" (to the dead end of a single-path course and back)
+        self.roundtrip = (RoundTrip(cell_of(start_pose), bounds, mode=race, start_heading=float(start_pose[2]))
+                          if goal is None else None)
         self.planner = Planner(bounds, goal if goal is not None else cell_of(start_pose))
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None

@@ -123,7 +123,7 @@ function draw(s) {
 function info(s) {
   const st = document.getElementById('status');
   st.textContent = s.status;
-  st.className = 'status' + (s.running ? ' run' : (s.status.startsWith('GOAL') || s.status.startsWith('ROUND TRIP')) ? ' goal' : s.status.startsWith('error') ? ' err' : '');
+  st.className = 'status' + (s.running ? ' run' : (s.status.startsWith('GOAL') || s.status.startsWith('ROUND TRIP') || s.status.startsWith('LAP')) ? ' goal' : s.status.startsWith('error') ? ' err' : '');
   const rows = [
     ['Elapsed', s.elapsed == null ? '-' : s.elapsed.toFixed(2) + ' s'],
     ['Control rate', s.loop_hz + ' Hz'],

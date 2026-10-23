@@ -16,7 +16,9 @@ from .perception import Perception
 
 class Runtime:
     def __init__(self, cfg: EnvConfig, hw, policy, start_pose, goal, bounds, prior: GridMap | None = None,
-                 perception: Perception | None = None, realtime: bool = True, stale_frame_s: float = 0.5):
+                 perception: Perception | None = None, realtime: bool = True, stale_frame_s: float = 0.5,
+                 race: str = "lap"):
+        self.race = race
         self.cfg, self.hw, self.policy = cfg, hw, policy
         self.perception = perception or Perception(cfg.camera)
         self.r_min = DepthRays(cfg.camera).r_min
@@ -35,7 +37,8 @@ class Runtime:
             self.goal = tuple(goal)
         if start_pose is not None:
             self.start_pose = np.asarray(start_pose, dtype=float)
-        self.stack = NavStack(self.cfg, self.bounds, self.start_pose, self.goal, self.r_min, prior=self.prior)
+        self.stack = NavStack(self.cfg, self.bounds, self.start_pose, self.goal, self.r_min, prior=self.prior,
+                              race=self.race)
         self.last_action = np.zeros(2)
         self.rays = np.full(self.cfg.camera.n_rays, self.cfg.camera.max_range)
         self.ir = np.zeros(2)
@@ -62,8 +65,12 @@ class Runtime:
             self.hw.stop()
             self.running = False
             self.finish_time = time.time() - (self.t_start or time.time())
-            self.status = (f"ROUND TRIP done in {self.finish_time:.2f}s" if self.stack.roundtrip is not None
-                           else f"GOAL in {self.finish_time:.2f}s")
+            if self.stack.roundtrip is None:
+                self.status = f"GOAL in {self.finish_time:.2f}s"
+            elif self.race == "lap":
+                self.status = f"LAP done in {self.finish_time:.2f}s"
+            else:
+                self.status = f"ROUND TRIP done in {self.finish_time:.2f}s"
             self.hw.led("green")
         else:
             self.hw.set_wheels(a[0], a[1])
@@ -105,7 +112,7 @@ class Runtime:
         self.hw.stop()
         if self._thread:
             self._thread.join(timeout=2)
-        if not self.status.startswith(("GOAL", "ROUND TRIP")):
+        if not self.status.startswith(("GOAL", "ROUND TRIP", "LAP")):
             self.status = "stopped"
 
     # ------------------------------------------------------------ dashboard

@@ -3,8 +3,9 @@
 Real robot (Hamster USB dongle + camera):
     python -m hamster_super.server --model models/policy.npz --camera 0 \
         --start 0,0,E --arena 12,12 [--goal 5,3] [--map maps/race.txt] [--calib calib.json]
-    Without --goal (and without a 'G' in the map) the robot does the race task:
-    drive the single-path course to its dead end and come back to the start.
+    Without --goal (and without a 'G' in the map) the robot does the race:
+    one lap of the closed circuit, back to the start line (--race lap, default),
+    or --race roundtrip for a single-path course (to its dead end and back).
 
 Digital twin (no hardware needed):
     python -m hamster_super.server --model models/policy.npz --sim maps/example_02_maze.txt
@@ -80,7 +81,9 @@ def main():
     ap.add_argument("--flip", action="store_true", help="rotate camera image 180 deg")
     ap.add_argument("--port-hamster", default=None, help="serial port of the Hamster dongle")
     ap.add_argument("--start", default=None, help="start cell and heading, e.g. 0,0,E")
-    ap.add_argument("--goal", default=None, help="goal cell, e.g. 5,3 (omit for the round trip)")
+    ap.add_argument("--goal", default=None, help="goal cell, e.g. 5,3 (omit for the race)")
+    ap.add_argument("--race", choices=["lap", "roundtrip"], default="lap",
+                    help="race without a goal: one lap of a circuit, or to a dead end and back")
     ap.add_argument("--arena", default=None, help="arena size in cells W,H (planning bounds)")
     ap.add_argument("--calib", default=None, help="calibration JSON")
     ap.add_argument("--host", default="0.0.0.0")
@@ -99,7 +102,9 @@ def main():
         cfg.dr = DomainRandomization(enabled=True)
         hw = SimHardware(cfg, gmap, render=not args.sim_fast_rays)
         start, heading = gmap.start, hw.robot.th
-        goal = None if gmap.kind == "roundtrip" else gmap.goal
+        goal = None if gmap.kind in ("lap", "roundtrip") else gmap.goal
+        if gmap.kind in ("lap", "roundtrip"):
+            args.race = gmap.kind
         bounds = gmap.cell_bounds()
         hw.reset_robot = lambda: hw.robot.reset((*cell_center(start), heading))
     else:
@@ -109,7 +114,9 @@ def main():
             ap.error("real robot needs --map or --start")
         if prior is not None:
             start, heading = prior.start, prior.start_heading or 0.0
-            goal = None if prior.kind == "roundtrip" else prior.goal
+            goal = None if prior.kind in ("lap", "roundtrip") else prior.goal
+            if prior.kind in ("lap", "roundtrip"):
+                args.race = prior.kind
         if args.start:
             start, heading = parse_pose(args.start)
         if args.goal:
@@ -128,9 +135,9 @@ def main():
 
     start_pose = (*cell_center(start), heading)
     rt = Runtime(cfg, hw, numpy_policy(args.model), start_pose, goal, bounds, prior=prior,
-                 perception=Perception(cfg.camera, seg))
+                 perception=Perception(cfg.camera, seg), race=args.race)
     serve(rt, args.host, args.port)
-    print(f"HamsterSuper server on http://{args.host}:{args.port}  (start {start} -> {'goal ' + str(goal) if goal else 'round trip'})", flush=True)
+    print(f"HamsterSuper server on http://{args.host}:{args.port}  (start {start} -> {'goal ' + str(goal) if goal else args.race})", flush=True)
     if args.autostart:
         rt.start()
     try:

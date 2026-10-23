@@ -8,8 +8,8 @@ import gymnasium as gym
 import numpy as np
 
 from ..config import GRID_SPACING, EnvConfig
-from ..maps.generator import generate, generate_track
-from ..maps.grid_map import GridMap, cell_center, cell_of
+from ..maps.generator import generate, generate_loop, generate_track, lap_order
+from ..maps.grid_map import GridMap, cell_center, cell_of, edge_between
 from ..nav.mapper import BeliefMap
 from ..nav.planner import Planner
 from ..nav.racing_line import RacingLine
@@ -53,7 +53,10 @@ class HamsterMazeEnv(gym.Env):
             self.cur_level = -1
         else:
             self.cur_level = options.get("level", self._sample_level())
-            if self.rng.random() < self.cfg.roundtrip_prob:
+            u = self.rng.random()
+            if u < self.cfg.lap_prob:
+                self.map = generate_loop(self.rng, self.cur_level)
+            elif u < self.cfg.lap_prob + self.cfg.roundtrip_prob:
                 self.map = generate_track(self.rng, self.cur_level)
             else:
                 self.map = generate(self.rng, self.cur_level)
@@ -75,13 +78,23 @@ class HamsterMazeEnv(gym.Env):
             self.rays.set_mount_error(0.0, 0.0)
         path = m.shortest_path()
         self.is_rt = m.kind == "roundtrip"
+        self.is_lap = m.kind == "lap"
         one_way = len(path) - 1 if path else 0
+        if self.is_lap:
+            self.lap = lap_order(m)
+            one_way = len(self.lap)
         self.opt_cells = 2 * one_way if self.is_rt else one_way       # cells driven by an ideal run
-        self.max_steps = self.cfg.steps_per_cell * max(1, self.opt_cells) + (200 if self.is_rt else 100)
+        self.max_steps = self.cfg.steps_per_cell * max(1, self.opt_cells) + (200 if (self.is_rt or self.is_lap) else 100)
         # rewards use the true map; the robot itself only knows what it has seen
         self.true_phase = "out"
         self.true_to_goal = Planner(self.bounds, m.goal)
-        self.true_to_goal.update(m.walls)
+        if self.is_lap:
+            # cut the loop between the last cell and the start: the lap becomes a
+            # path start -> ... -> last cell, then one more cell into the start
+            self.true_to_goal.update(set(m.walls) | {edge_between(m.start, m.goal)})
+            self.true_visited = {m.start}
+        else:
+            self.true_to_goal.update(m.walls)
         if self.is_rt:
             self.true_to_start = Planner(self.bounds, m.start)
             self.true_to_start.update(m.walls)
@@ -92,13 +105,15 @@ class HamsterMazeEnv(gym.Env):
         self.pose_err = np.zeros(3)
         self._last_th = self.robot.th
         self.belief = BeliefMap(self.bounds, prior=m if self.cfg.known_map else None)
-        self.planner = Planner(self.bounds, m.start if self.is_rt else m.goal)
-        self.rt = RoundTrip(m.start, self.bounds) if self.is_rt else None
+        race = self.is_rt or self.is_lap
+        self.planner = Planner(self.bounds, m.start if race else m.goal)
+        self.rt = (RoundTrip(m.start, self.bounds, mode="lap" if self.is_lap else "roundtrip",
+                             start_heading=m.start_heading) if race else None)
         self.line = RacingLine(robot_radius=self.cfg.robot.collision_radius)
         self.use_stack = self.full_stack or (self.rng.random() < self.cfg.full_stack_prob)
         if self.use_stack:
-            self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, None if self.is_rt else m.goal,
-                                  self.rays.r_min,
+            self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, None if race else m.goal,
+                                  self.rays.r_min, race="lap" if self.is_lap else "roundtrip",
                                   prior=m if self.cfg.known_map else None, rng=self.rng)
             self.stack.odom.spec = self._calibrated_spec()
         obs = self._observe()
@@ -182,10 +197,18 @@ class HamsterMazeEnv(gym.Env):
         info = {}
         m = self.map
         at = lambda c: cell_of(pose) == tuple(c) and float(np.linalg.norm(pose[:2] - cell_center(c))) < 3.5
-        if self.is_rt and self.true_phase == "out" and cell_of(pose) == tuple(m.goal):
+        c = cell_of(pose)
+        if self.is_rt and self.true_phase == "out" and c == tuple(m.goal):
             self.true_phase = "back"                      # reached the dead end
             reward += 0.5 * cfg.r_goal
-        if (not self.is_rt and at(m.goal)) or (self.is_rt and self.true_phase == "back" and at(m.start)):
+        lap_done = False
+        if self.is_lap:
+            if c != tuple(m.start):
+                self.true_visited.add(c)
+            # back in the start cell after (nearly) the whole circuit
+            lap_done = c == tuple(m.start) and len(self.true_visited) >= 0.9 * len(self.lap)
+        if (not (self.is_rt or self.is_lap) and at(m.goal)) or lap_done or \
+                (self.is_rt and self.true_phase == "back" and at(m.start)):
             reward += cfg.r_goal
             terminated = True
             info["success"] = True
@@ -193,8 +216,8 @@ class HamsterMazeEnv(gym.Env):
             reward += cfg.r_out
             terminated = True
             info["success"] = False
-        elif self.is_rt and self.rt is not None and self.rt.phase == DONE:
-            terminated = True                             # robot thinks it is done but never reached the end
+        elif (self.is_rt or self.is_lap) and self.rt is not None and self.rt.phase == DONE:
+            terminated = True                             # robot thinks it is done but it is not
             info["success"] = False
         elif self.t >= self.max_steps:
             truncated = True
@@ -202,11 +225,16 @@ class HamsterMazeEnv(gym.Env):
         if terminated or truncated:
             info.update(steps=self.t, time_s=self.t * cfg.dt, collisions=self.collisions,
                         opt_cells=self.opt_cells, level=self.cur_level, roundtrip=self.is_rt,
-                        turned=self.true_phase == "back")
+                        lap=self.is_lap, turned=self.true_phase == "back",
+                        lap_frac=(len(self.true_visited) / len(self.lap)) if self.is_lap else None)
         return obs, reward, terminated, truncated, info
 
     def _potential(self, pose) -> float:
         """True remaining distance (cm) of the whole task from `pose`."""
+        if self.is_lap:
+            if cell_of(pose) == tuple(self.map.start) and len(self.true_visited) > 0.5 * len(self.lap):
+                return 0.0                                # crossed the finish line
+            return self.true_to_goal.potential(pose) + 9.0
         if not self.is_rt:
             return self.true_to_goal.potential(pose)
         if self.true_phase == "out":

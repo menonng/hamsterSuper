@@ -87,6 +87,100 @@ def generate_track(rng: np.random.Generator, level: int = 3) -> GridMap:
     return m
 
 
+def _loop_cells(nodes, tree_edges):
+    """Hamiltonian cycle around a tree of 2x2 cell blocks.
+    Every block starts as a 4-cell ring; each tree edge merges the two rings
+    into one (a 2-opt swap), so the result is a single loop through all cells."""
+    adj: dict = {}
+
+    def link(a, b):
+        adj.setdefault(a, set()).add(b)
+        adj.setdefault(b, set()).add(a)
+
+    def unlink(a, b):
+        adj[a].discard(b)
+        adj[b].discard(a)
+
+    def block(i, j):   # BL, BR, TR, TL
+        return (2 * i, 2 * j), (2 * i + 1, 2 * j), (2 * i + 1, 2 * j + 1), (2 * i, 2 * j + 1)
+
+    for i, j in nodes:
+        bl, br, tr, tl = block(i, j)
+        link(bl, br), link(br, tr), link(tr, tl), link(tl, bl)
+    for a, b in tree_edges:
+        (ai, aj), (bi, bj) = sorted((a, b))
+        abl, abr, atr, atl = block(ai, aj)
+        bbl, bbr, btr, btl = block(bi, bj)
+        if bi == ai + 1:      # B right of A
+            unlink(abr, atr), unlink(bbl, btl)
+            link(abr, bbl), link(atr, btl)
+        else:                 # B above A
+            unlink(atl, atr), unlink(bbl, bbr)
+            link(atl, bbl), link(atr, bbr)
+    return adj
+
+
+def generate_loop(rng: np.random.Generator, level: int = 3) -> GridMap:
+    """Closed circuit (like an F1 / kart track): one lane, no branches.
+    A random tree of 2x2 blocks (biased to grow straight, for long straights)
+    is traced around; the loop gets hairpins and lanes running side by side."""
+    level = int(np.clip(level, 0, len(LEVELS) - 1))
+    lo, hi = LEVELS[level]
+    w = int(rng.integers(lo, hi + 1))
+    h = int(rng.integers(lo, hi + 1))
+    m_, n_ = max(1, w // 2), max(1, h // 2)
+    k = max(1, int(round(m_ * n_ * rng.uniform(0.55, 1.0))))
+    root = (int(rng.integers(m_)), int(rng.integers(n_)))
+    nodes, edges, came = {root}, [], {root: None}
+    order = [root]
+    dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+    for _ in range(20 * k):
+        if len(nodes) >= k:
+            break
+        # grow mostly from recent nodes, and mostly straight on
+        a = order[-1 - int(min(len(order) - 1, rng.exponential(2.0)))]
+        opts = [d for d in dirs if 0 <= a[0] + d[0] < m_ and 0 <= a[1] + d[1] < n_
+                and (a[0] + d[0], a[1] + d[1]) not in nodes]
+        if not opts:
+            continue
+        d = came[a] if came[a] in opts and rng.random() < 0.65 else opts[int(rng.integers(len(opts)))]
+        b = (a[0] + d[0], a[1] + d[1])
+        nodes.add(b)
+        edges.append((a, b))
+        came[b] = d
+        order.append(b)
+    adj = _loop_cells(nodes, edges)
+    m = GridMap(name=f"circuit-L{level}-{2 * m_}x{2 * n_}-{len(adj)}", kind="lap")
+    for c, nb in adj.items():
+        for dx, dy in NEIGHBORS:
+            n = (c[0] + dx, c[1] + dy)
+            if n not in nb:
+                m.walls.add(edge_between(c, n))
+    cells = sorted(adj)
+    m.start = cells[int(rng.integers(len(cells)))]
+    ahead = sorted(adj[m.start])[int(rng.integers(2))]
+    d0 = (ahead[0] - m.start[0], ahead[1] - m.start[1])
+    m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]
+    behind = next(c for c in adj[m.start] if c != ahead)
+    m.goal = behind               # the last cell of the lap (crossing it into the start = lap done)
+    m.bounds = (0, 0, 2 * m_ - 1, 2 * n_ - 1)
+    return m
+
+
+def lap_order(m: GridMap) -> list:
+    """Cells of a lap course in driving order, starting at the start cell."""
+    d = (round(math.cos(m.start_heading)), round(math.sin(m.start_heading)))
+    prev, cur = m.start, (m.start[0] + d[0], m.start[1] + d[1])
+    order = [m.start]
+    while cur != m.start and len(order) < 100000:
+        order.append(cur)
+        nxt = [n for n in m.open_neighbors(cur) if n != prev]
+        if not nxt:
+            break
+        prev, cur = cur, nxt[0]
+    return order
+
+
 def generate(rng: np.random.Generator, level: int = 3, style: str | None = None) -> GridMap:
     level = int(np.clip(level, 0, len(LEVELS) - 1))
     lo, hi = LEVELS[level]

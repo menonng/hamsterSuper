@@ -131,7 +131,7 @@ def test_roundtrip_finds_dead_end_and_returns():
     """Ideal-pose round trip with a simple waypoint follower on a generated track."""
     from hamster_super.config import DomainRandomization
     from hamster_super.env.hamster_env import HamsterMazeEnv
-    cfg = EnvConfig(roundtrip_prob=1.0, dr=DomainRandomization(enabled=False))
+    cfg = EnvConfig(lap_prob=0.0, roundtrip_prob=1.0, dr=DomainRandomization(enabled=False))
     env = HamsterMazeEnv(cfg, level=2, seed=1)
     k = cfg.camera.n_rays + 2
     wins = 0
@@ -159,3 +159,34 @@ def test_track_generator_is_a_single_path():
             assert len(list(m.open_neighbors(c))) <= 2
         assert len(list(m.open_neighbors(m.start))) == 1
         assert len(list(m.open_neighbors(m.goal))) == 1
+
+
+def test_circuit_generator_is_one_closed_lane():
+    from hamster_super.maps.generator import generate_loop, lap_order
+    rng = np.random.default_rng(0)
+    for level in range(9):
+        m = generate_loop(rng, level)
+        assert m.kind == "lap"
+        order = lap_order(m)
+        assert order[-1] == m.goal                         # the lap closes back onto the start
+        for c in order:                                    # one lane: exactly two open sides per cell
+            assert len(list(m.open_neighbors(c))) == 2
+        assert len(set(order)) == len(order)
+
+
+def test_one_lap_with_waypoint_follower():
+    from hamster_super.config import DomainRandomization
+    from hamster_super.env.hamster_env import HamsterMazeEnv
+    cfg = EnvConfig(lap_prob=1.0, dr=DomainRandomization(enabled=False))
+    env = HamsterMazeEnv(cfg, level=3, seed=2)
+    k = cfg.camera.n_rays + 2
+    for _ in range(3):
+        obs, _ = env.reset(options={"level": 3})
+        done = False
+        while not done:
+            ang = math.atan2(obs[k + 1], obs[k])
+            fwd = max(0.0, math.cos(ang)) ** 3 * 0.9
+            turn = float(np.clip(1.5 * ang, -0.7, 0.7))
+            obs, _, te, tr, info = env.step((fwd - turn, fwd + turn))
+            done = te or tr
+        assert info["success"] and info["lap_frac"] >= 0.9

@@ -69,10 +69,9 @@ def parse_ascii(text: str, name: str = "") -> GridMap:
         raise ValueError("ASCII map needs an 'S' (start) cell")
     m.start = start
     m.bounds = (0, 0, n_cells_x - 1, n_cells_y - 1)
-    if goal is None:   # no 'G': round trip to the course's dead end and back
-        m.kind = "roundtrip"
-        d = m.distance_field(start)
-        m.goal = max(d, key=d.get)
+    if goal is None:
+        _race_kind(m)
+
     else:
         m.goal = goal
     return m
@@ -99,7 +98,7 @@ def to_ascii(m: GridMap) -> str:
                     if m.start_heading is not None:
                         hd = min(DIRS, key=lambda k: abs(_wrap(DIRS[k] - m.start_heading)))
                     body = (" S" + hd).ljust(3)
-                elif (i, cy) == m.goal and m.kind != "roundtrip":
+                elif (i, cy) == m.goal and m.kind == "goal":
                     body = " G "
                 s += body
         rows.append(s)
@@ -111,6 +110,24 @@ def _wrap(a):
     return (a + math.pi) % (2 * math.pi) - math.pi
 
 
+def _race_kind(m: GridMap):
+    """No goal given: a closed circuit (start has two open sides) is a lap race,
+    otherwise a round trip to the dead end. `goal` keeps the true lap end / dead end."""
+    import math
+    if len(list(m.open_neighbors(m.start))) == 2:
+        m.kind = "lap"
+        if m.start_heading is None:
+            n = sorted(m.open_neighbors(m.start))[0]
+            m.start_heading = math.atan2(n[1] - m.start[1], n[0] - m.start[0])
+        d = (round(math.cos(m.start_heading)), round(math.sin(m.start_heading)))
+        ahead = (m.start[0] + d[0], m.start[1] + d[1])
+        m.goal = next(c for c in m.open_neighbors(m.start) if c != ahead)
+    else:
+        m.kind = "roundtrip"
+        dist = m.distance_field(m.start)
+        m.goal = max(dist, key=dist.get)
+
+
 def parse_json(data: dict | str, name: str = "") -> GridMap:
     if isinstance(data, str):
         data = json.loads(data)
@@ -119,9 +136,7 @@ def parse_json(data: dict | str, name: str = "") -> GridMap:
         m.walls.add(make_edge(tuple(a), tuple(b)))
     m.start = tuple(data["start"])
     if data.get("goal") is None:
-        m.kind = "roundtrip"
-        d = m.distance_field(m.start)
-        m.goal = max(d, key=d.get)
+        _race_kind(m)
     else:
         m.goal = tuple(data["goal"])
     hd = data.get("start_heading")
@@ -137,7 +152,7 @@ def parse_json(data: dict | str, name: str = "") -> GridMap:
 def to_json(m: GridMap) -> str:
     d = {"name": m.name,
          "walls": [[list(a), list(b)] for a, b in sorted(m.walls)],
-         "start": list(m.start), "goal": None if m.kind == "roundtrip" else list(m.goal)}
+         "start": list(m.start), "goal": list(m.goal) if m.kind == "goal" else None}
     if m.start_heading is not None:
         d["start_heading"] = m.start_heading
     if m.bounds is not None:
