@@ -90,6 +90,7 @@ class HamsterMazeEnv(gym.Env):
         self.prev_action = np.zeros(2)
         self.collisions = 0
         self.pose_err = np.zeros(3)
+        self._last_th = self.robot.th
         self.belief = BeliefMap(self.bounds, prior=m if self.cfg.known_map else None)
         self.planner = Planner(self.bounds, m.start if self.is_rt else m.goal)
         self.rt = RoundTrip(m.start, self.bounds) if self.is_rt else None
@@ -144,9 +145,12 @@ class HamsterMazeEnv(gym.Env):
             return obs
         est = self._est_pose()
         self.est = est
-        self.belief.update(cam_origin(cfg, est), est[2], self.rays.angles, rays,
-                           cfg.camera.max_range, self.rays.r_min)
-        self.belief.update_ir(est, ir, cfg.robot)
+        spin = abs(float((self.robot.th - self._last_th + math.pi) % (2 * math.pi) - math.pi))
+        self._last_th = self.robot.th
+        if spin < 0.12:   # same rule as NavStack: no mapping while spinning fast
+            self.belief.update(cam_origin(cfg, est), est[2], self.rays.angles, rays,
+                               cfg.camera.max_range, self.rays.r_min)
+            self.belief.update_ir(est, ir, cfg.robot)
         if self.rt is not None:
             self.planner.set_goal(self.rt.goal(cell_of(est), est, est[2], self.belief.walls))
         self.planner.update(self.belief.walls, cell_of(est))
