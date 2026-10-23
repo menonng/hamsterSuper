@@ -1,0 +1,52 @@
+# Deploys the training dashboard (the gh-pages branch, written by
+# hamster_super/rl/pages.py) to GitHub Pages with GitHub Actions.
+# It also switches the repository's Pages source to "GitHub Actions" (or
+# creates the Pages site) if it is not set up that way yet, so no manual
+# settings change is needed.
+name: Pages
+
+on:
+  push:
+    branches: [gh-pages]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Point the Pages source at GitHub Actions
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          if cfg="$(gh api "repos/$REPO/pages" 2>/dev/null)"; then
+            echo "current Pages config: $cfg"
+            if [ "$(echo "$cfg" | jq -r .build_type)" != "workflow" ]; then
+              gh api -X PUT "repos/$REPO/pages" -f build_type=workflow \
+                || echo "::warning::could not switch the Pages source; set Settings > Pages > Source to 'GitHub Actions'"
+            fi
+          else
+            gh api -X POST "repos/$REPO/pages" -f build_type=workflow \
+              || echo "::warning::could not create the Pages site; enable it in Settings > Pages"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: .
+      - id: deployment
+        uses: actions/deploy-pages@v4

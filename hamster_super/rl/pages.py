@@ -9,8 +9,9 @@ minute and plays the recorded runs back as an animation.
     python -m hamster_super.rl.train ... --pages-every 50      # publish while training
     python -m hamster_super.rl.pages --run runs/ppo            # publish once by hand
 
-One-time setup: GitHub repo Settings -> Pages -> Build and deployment ->
-Source "Deploy from a branch", branch `gh-pages`, folder `/ (root)`.
+Deployment: the pushed commit carries .github/workflows/pages.yml, which
+deploys it with GitHub Actions and switches the repository's Pages source to
+"GitHub Actions" by itself, so no settings change is needed.
 """
 from __future__ import annotations
 
@@ -165,6 +166,11 @@ class PagesPublisher:
                     shutil.copy(old, self.wt / "data" / "replays.json")
             else:
                 shutil.copy(self.wt / "data" / "replays.json", self.run / "_pages_replays.json")
+            # the deploy workflow must live in the pushed commit for the push to trigger it
+            wf = self.repo / ".github" / "workflows" / "pages.yml"
+            if wf.exists():
+                (self.wt / ".github" / "workflows").mkdir(parents=True, exist_ok=True)
+                shutil.copy(wf, self.wt / ".github" / "workflows" / "pages.yml")
             _git("add", "-A", cwd=self.wt)
             msg = f"Training dashboard snapshot (iter {iteration})" + (f"\n\n{self.trailer}" if self.trailer else "")
             # a fresh orphan commit every time: the branch never accumulates history
