@@ -8,11 +8,12 @@ import gymnasium as gym
 import numpy as np
 
 from ..config import GRID_SPACING, EnvConfig
-from ..maps.generator import generate
+from ..maps.generator import generate, generate_track
 from ..maps.grid_map import GridMap, cell_center, cell_of
 from ..nav.mapper import BeliefMap
 from ..nav.planner import Planner
 from ..nav.racing_line import RacingLine
+from ..nav.roundtrip import DONE, RoundTrip
 from ..nav.stack import NavStack, build_obs, cam_origin, obs_dim
 from ..sim.robot import SimRobot, wrap
 from ..sim.sensors import DepthRays
@@ -52,7 +53,10 @@ class HamsterMazeEnv(gym.Env):
             self.cur_level = -1
         else:
             self.cur_level = options.get("level", self._sample_level())
-            self.map = generate(self.rng, self.cur_level)
+            if self.rng.random() < self.cfg.roundtrip_prob:
+                self.map = generate_track(self.rng, self.cur_level)
+            else:
+                self.map = generate(self.rng, self.cur_level)
         m = self.map
         self.boxes = m.wall_boxes()
         self.bounds = m.cell_bounds()
@@ -70,18 +74,30 @@ class HamsterMazeEnv(gym.Env):
         else:
             self.rays.set_mount_error(0.0, 0.0)
         path = m.shortest_path()
-        self.opt_cells = len(path) - 1 if path else 0
-        self.max_steps = self.cfg.steps_per_cell * max(1, self.opt_cells) + 100
+        self.is_rt = m.kind == "roundtrip"
+        one_way = len(path) - 1 if path else 0
+        self.opt_cells = 2 * one_way if self.is_rt else one_way       # cells driven by an ideal run
+        self.max_steps = self.cfg.steps_per_cell * max(1, self.opt_cells) + (200 if self.is_rt else 100)
+        # rewards use the true map; the robot itself only knows what it has seen
+        self.true_phase = "out"
+        self.true_to_goal = Planner(self.bounds, m.goal)
+        self.true_to_goal.update(m.walls)
+        if self.is_rt:
+            self.true_to_start = Planner(self.bounds, m.start)
+            self.true_to_start.update(m.walls)
+            self.leg = 9.0 * one_way
         self.t = 0
         self.prev_action = np.zeros(2)
         self.collisions = 0
         self.pose_err = np.zeros(3)
         self.belief = BeliefMap(self.bounds, prior=m if self.cfg.known_map else None)
-        self.planner = Planner(self.bounds, m.goal)
+        self.planner = Planner(self.bounds, m.start if self.is_rt else m.goal)
+        self.rt = RoundTrip(m.start, self.bounds) if self.is_rt else None
         self.line = RacingLine(robot_radius=self.cfg.robot.collision_radius)
         self.use_stack = self.full_stack or (self.rng.random() < self.cfg.full_stack_prob)
         if self.use_stack:
-            self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, m.goal, self.rays.r_min,
+            self.stack = NavStack(self.cfg, self.bounds, self.robot.pose, None if self.is_rt else m.goal,
+                                  self.rays.r_min,
                                   prior=m if self.cfg.known_map else None, rng=self.rng)
             self.stack.odom.spec = self._calibrated_spec()
         obs = self._observe()
@@ -124,12 +140,15 @@ class HamsterMazeEnv(gym.Env):
             self.est = self.stack.pose.copy()
             self.wp = self.stack.wp
             self.line = self.stack.line
+            self.rt = self.stack.roundtrip
             return obs
         est = self._est_pose()
         self.est = est
         self.belief.update(cam_origin(cfg, est), est[2], self.rays.angles, rays,
                            cfg.camera.max_range, self.rays.r_min)
         self.belief.update_ir(est, ir, cfg.robot)
+        if self.rt is not None:
+            self.planner.set_goal(self.rt.goal(cell_of(est), est, est[2], self.belief.walls))
         self.planner.update(self.belief.walls, cell_of(est))
         # the localization error the planner would report (in the full stack: particle spread)
         self.line.update(self.planner, est, sigma=float(np.linalg.norm(self.pose_err[:2])) * 0.5 + 0.2)
@@ -146,10 +165,8 @@ class HamsterMazeEnv(gym.Env):
         da = a - self.prev_action
         self.prev_action = a
         obs = self._observe()
-        # progress on the (possibly updated) belief map: both potentials use the new map
         pose = self.robot.pose
-        phi_prev = self.planner.potential(self.prev_pose)
-        phi = self.planner.potential(pose)
+        phi_prev, phi = self._potential(self.prev_pose), self._potential(pose)
         self.prev_pose = pose
         progress = float(np.clip(phi_prev - phi, -5, 5))
         reward = cfg.r_progress * progress + cfg.r_time + cfg.r_smooth * float(da @ da)
@@ -159,8 +176,12 @@ class HamsterMazeEnv(gym.Env):
         reward += cfg.r_reverse * back
         terminated = truncated = False
         info = {}
-        goal_d = float(np.linalg.norm(pose[:2] - cell_center(self.map.goal)))
-        if cell_of(pose) == self.map.goal and goal_d < 3.5:
+        m = self.map
+        at = lambda c: cell_of(pose) == tuple(c) and float(np.linalg.norm(pose[:2] - cell_center(c))) < 3.5
+        if self.is_rt and self.true_phase == "out" and cell_of(pose) == tuple(m.goal):
+            self.true_phase = "back"                      # reached the dead end
+            reward += 0.5 * cfg.r_goal
+        if (not self.is_rt and at(m.goal)) or (self.is_rt and self.true_phase == "back" and at(m.start)):
             reward += cfg.r_goal
             terminated = True
             info["success"] = True
@@ -168,13 +189,25 @@ class HamsterMazeEnv(gym.Env):
             reward += cfg.r_out
             terminated = True
             info["success"] = False
+        elif self.is_rt and self.rt is not None and self.rt.phase == DONE:
+            terminated = True                             # robot thinks it is done but never reached the end
+            info["success"] = False
         elif self.t >= self.max_steps:
             truncated = True
             info["success"] = False
         if terminated or truncated:
             info.update(steps=self.t, time_s=self.t * cfg.dt, collisions=self.collisions,
-                        opt_cells=self.opt_cells, level=self.cur_level)
+                        opt_cells=self.opt_cells, level=self.cur_level, roundtrip=self.is_rt,
+                        turned=self.true_phase == "back")
         return obs, reward, terminated, truncated, info
+
+    def _potential(self, pose) -> float:
+        """True remaining distance (cm) of the whole task from `pose`."""
+        if not self.is_rt:
+            return self.true_to_goal.potential(pose)
+        if self.true_phase == "out":
+            return self.true_to_goal.potential(pose) + self.leg
+        return self.true_to_start.potential(pose)
 
     def _inside(self, pose):
         x0, y0, x1, y1 = self.bounds

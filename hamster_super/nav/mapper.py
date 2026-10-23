@@ -84,7 +84,9 @@ class BeliefMap:
             hit = (r < self.map_range) and (r > rmin + 0.3)
             free_until = min(r - 1.0, self.map_range)
             if r > rmin + 0.3:
-                self._free_ray(ox, oy, dx, dy, free_until)
+                # nothing closer than the blind zone is observed (the camera may even look
+                # over a wall there), so only the visible part of the ray clears edges
+                self._free_ray(ox, oy, dx, dy, free_until, start=rmin)
             if hit:
                 d = r + WALL_THICKNESS / 2
                 e = self.snap(ox + dx * d, oy + dy * d)
@@ -118,8 +120,8 @@ class BeliefMap:
         i, j = int(math.floor(gx)), int(round(gy))
         return ((i, j), (i + 1, j))
 
-    def _free_ray(self, ox, oy, dx, dy, length):
-        if length <= 0:
+    def _free_ray(self, ox, oy, dx, dy, length, start=0.0):
+        if length <= start:
             return
         ex, ey = ox + dx * length, oy + dy * length
         for (o, d, e, other_o, other_d, vertical) in ((ox, dx, ex, oy, dy, True), (oy, dy, ey, ox, dx, False)):
@@ -128,7 +130,7 @@ class BeliefMap:
             lo, hi = sorted((o, e))
             for k in range(math.ceil(lo / G), math.floor(hi / G) + 1):
                 t = (k * G - o) / d
-                if t <= 0 or t >= length:
+                if t <= start or t >= length:
                     continue
                 q = other_o + other_d * t
                 frac = q / G - math.floor(q / G)

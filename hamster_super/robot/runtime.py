@@ -27,7 +27,8 @@ class Runtime:
         self.running = False
         self.status = "idle"
         self._thread = None
-        self.reset(goal)
+        self.goal = None if goal is None else tuple(goal)
+        self.reset()
 
     def reset(self, goal=None, start_pose=None):
         if goal is not None:
@@ -61,7 +62,8 @@ class Runtime:
             self.hw.stop()
             self.running = False
             self.finish_time = time.time() - (self.t_start or time.time())
-            self.status = f"GOAL in {self.finish_time:.2f}s"
+            self.status = (f"ROUND TRIP done in {self.finish_time:.2f}s" if self.stack.roundtrip is not None
+                           else f"GOAL in {self.finish_time:.2f}s")
             self.hw.led("green")
         else:
             self.hw.set_wheels(a[0], a[1])
@@ -103,7 +105,7 @@ class Runtime:
         self.hw.stop()
         if self._thread:
             self._thread.join(timeout=2)
-        if not self.status.startswith("GOAL"):
+        if not self.status.startswith(("GOAL", "ROUND TRIP")):
             self.status = "stopped"
 
     # ------------------------------------------------------------ dashboard
@@ -120,8 +122,9 @@ class Runtime:
                 "running": self.running,
                 "pose": pose.tolist(),
                 "true_pose": None if true_pose is None else np.asarray(true_pose).tolist(),
-                "goal": list(self.goal),
-                "goal_xy": cell_center(self.goal).tolist(),
+                "goal": list(self.stack.planner.goal),
+                "goal_xy": cell_center(self.stack.planner.goal).tolist(),
+                "phase": self.stack.roundtrip.phase if self.stack.roundtrip is not None else None,
                 "bounds": list(self.bounds),
                 "walls": [[list(a), list(b)] for a, b in self.stack.belief.walls],
                 "true_walls": ([[list(a), list(b)] for a, b in getattr(self.hw, "map").walls]

@@ -1,7 +1,8 @@
 # 🐹 HamsterSuper — 햄스터봇 자율주행 (심층 강화학습)
 
-Robomation **햄스터봇**이 미로형 레이스 코스를 **출발 칸 → 도착 칸**까지 최대한 빠르고 충돌 없이 달리도록
-만드는 프로젝트입니다. 시뮬레이터에서 **PPO 강화학습**으로 학습하고, 실제 로봇에서는 **카메라 + Python 서버**로
+Robomation **햄스터봇**이 레이스 코스를 최대한 빠르고 충돌 없이 달리도록 만드는 프로젝트입니다.
+**실제 경기 과제: 정해진 목적지 없이, 갈림길 없는 한 줄 코스의 막다른 끝까지 갔다가 출발점으로 돌아오는 왕복 완주.**
+(목적지 칸을 주는 일반 미로 모드도 지원합니다.) 시뮬레이터에서 **PPO 강화학습**으로 학습하고, 실제 로봇에서는 **카메라 + Python 서버**로
 같은 정책을 그대로 실행합니다. 학습 중 **500 iteration마다 GitHub Release**로 모델이 자동 배포됩니다.
 
 ## 코스 규격 (실측치 그대로 사용)
@@ -53,7 +54,7 @@ python -m pytest                        # 테스트
 
 ```bash
 gh auth login            # 또는 export GITHUB_TOKEN=...  (repo 권한)
-python -m hamster_super.rl.train --iters 5000 --envs 32 --workers 4 --out runs/ppo
+python -m hamster_super.rl.train --iters 5000 --envs 32 --out runs/ppo   # --workers 기본값 = CPU 코어 수
 ```
 
 ### GitHub Pages 학습 대시보드
@@ -145,9 +146,19 @@ python -m hamster_super.rl.evaluate --model models/policy.npz --maps maps/ --ful
    python -m hamster_super.server --model models/policy.npz --sim maps/example_02_maze.txt
    ```
 
+## 왕복 완주 (경기 모드)
+
+* 목적지를 주지 않으면(`--goal` 없음, 맵에 `G` 없음) 왕복 모드로 동작합니다.
+* 가는 길: 아직 안 가본 가장 가까운 칸(직진 우선)을 목표로 달리며 지도를 그립니다. 출발 칸이 아닌 칸에서
+  세 면이 벽이면 **막다른 끝** → 되돌아섭니다.
+* 오는 길: 이미 그린 지도로 출발 칸까지 레이싱 라인을 따라 전속력 복귀.
+* 학습 맵의 80 %는 갈림길 없는 한 줄 코스(최대 12×12 격자, 길이 50칸 이상)로 생성됩니다.
+* 빠르게 돌 때(한 스텝 회전 > 0.12 rad)는 방향 추정이 가장 불확실하므로 지도에 벽을 그리지 않습니다.
+
 ## 맵 파일 형식
 
-`maps/*.txt` — `+`는 바닥 점, `---`/`|`는 벽, `S`(+방향 E/N/W/S)는 출발, `G`는 도착:
+`maps/*.txt` — `+`는 바닥 점, `---`/`|`는 벽, `S`(+방향 E/N/W/S)는 출발, `G`는 도착
+(**`G`가 없으면 왕복 코스**, 예: `maps/example_04_roundtrip_track.txt`):
 
 ```
 +---+---+---+---+

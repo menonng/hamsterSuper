@@ -62,6 +62,10 @@ class GridMap:
     # Cell range (inclusive) used for planning; None = derived from walls/start/goal.
     bounds: tuple[int, int, int, int] | None = None
     name: str = ""
+    # "goal": drive start -> goal. "roundtrip": single-path course, drive to its
+    # dead end and back to the start; `goal` then holds the true dead end (used
+    # only for rewards/evaluation, the robot has to find it itself).
+    kind: str = "goal"
 
     # ------------------------------------------------------------------ edits
     def add_wall(self, a: Point, b: Point):
@@ -147,4 +151,4 @@ class GridMap:
         return out
 
     def copy(self) -> "GridMap":
-        return GridMap(set(self.walls), self.start, self.goal, self.start_heading, self.bounds, self.name)
+        return GridMap(set(self.walls), self.start, self.goal, self.start_heading, self.bounds, self.name, self.kind)

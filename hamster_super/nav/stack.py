@@ -17,6 +17,7 @@ from .localizer import LatticeParticleFilter, Odometry, wall_orientation
 from .mapper import BeliefMap
 from .planner import Planner
 from .racing_line import RacingLine
+from .roundtrip import DONE, RoundTrip
 
 WP_CLIP = 3.0
 
@@ -50,12 +51,15 @@ class NavStack:
         self.angles = cfg.camera.ray_angles()
         self.r_min = np.asarray(r_min)
         self.belief = BeliefMap(bounds, prior=prior)
-        self.planner = Planner(bounds, goal)
+        # goal=None: round trip (find the course's dead end, then return to the start)
+        self.roundtrip = RoundTrip(cell_of(start_pose), bounds) if goal is None else None
+        self.planner = Planner(bounds, goal if goal is not None else cell_of(start_pose))
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
         self.wp = (None, None)
         self.loc_range = 35.0
+        self.map_max_spin = 0.12             # rad per step
         self.line = RacingLine(robot_radius=cfg.robot.collision_radius)
 
     @property
@@ -81,8 +85,14 @@ class NavStack:
             self.pf.update(pts, self.belief)
             self.odom.pose[:] = self.pf.pose
         pose = self.odom.pose
-        self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
-        self.belief.update_ir(pose, ir, cfg.robot)
+        # while spinning fast the heading is least certain (latency): skip mapping
+        # rather than draw walls in the wrong place
+        spin = abs(float((pose[2] - before[2] + math.pi) % (2 * math.pi) - math.pi))
+        if spin < self.map_max_spin:
+            self.belief.update(cam_origin(cfg, pose), pose[2], self.angles, rays, mr, self.r_min)
+            self.belief.update_ir(pose, ir, cfg.robot)
+        if self.roundtrip is not None:
+            self.planner.set_goal(self.roundtrip.goal(cell_of(pose), pose, pose[2], self.belief.walls))
         self.planner.update(self.belief.walls, cell_of(pose))
         self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0)
         self.wp = self.line.waypoints()
@@ -108,4 +118,6 @@ class NavStack:
 
     def reached_goal(self, tol: float = 3.5) -> bool:
         from ..maps.grid_map import cell_center
+        if self.roundtrip is not None:
+            return self.roundtrip.phase == DONE
         return float(np.linalg.norm(self.pose[:2] - cell_center(self.planner.goal))) < tol

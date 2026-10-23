@@ -322,7 +322,8 @@ def main():
     ap.add_argument("--iters", type=int, default=5000)
     ap.add_argument("--envs", type=int, default=32)
     ap.add_argument("--steps", type=int, default=128)
-    ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument("--workers", type=int, default=os.cpu_count() or 4,
+                    help="parallel simulation processes (default: one per CPU core)")
     ap.add_argument("--lr", type=float, default=3e-4)
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--torch-threads", type=int, default=1)

@@ -125,3 +125,37 @@ def test_racing_line_backs_off_when_uncertain():
     unsure.update(p, cell_center(m.start), sigma=1.0)
     assert _min_wall_distance(unsure.line, m.wall_boxes()) > _min_wall_distance(sure.line, m.wall_boxes()) + 1.0
     assert all(b["t"] > a["t"] for a, b in zip(sure.corners, unsure.corners))
+
+
+def test_roundtrip_finds_dead_end_and_returns():
+    """Ideal-pose round trip with a simple waypoint follower on a generated track."""
+    from hamster_super.config import DomainRandomization
+    from hamster_super.env.hamster_env import HamsterMazeEnv
+    cfg = EnvConfig(roundtrip_prob=1.0, dr=DomainRandomization(enabled=False))
+    env = HamsterMazeEnv(cfg, level=2, seed=1)
+    k = cfg.camera.n_rays + 2
+    wins = 0
+    for _ in range(4):
+        obs, _ = env.reset(options={"level": 2})
+        done = False
+        while not done:
+            ang = math.atan2(obs[k + 1], obs[k])
+            fwd = max(0.0, math.cos(ang)) ** 3 * 0.9
+            turn = float(np.clip(1.5 * ang, -0.7, 0.7))
+            obs, _, te, tr, info = env.step((fwd - turn, fwd + turn))
+            done = te or tr
+        wins += info["success"] and info["turned"]
+    assert wins == 4
+
+
+def test_track_generator_is_a_single_path():
+    from hamster_super.maps.generator import generate_track
+    rng = np.random.default_rng(0)
+    for level in range(6):
+        m = generate_track(rng, level)
+        assert m.kind == "roundtrip"
+        path = m.shortest_path()
+        for c in path:       # every corridor cell has at most two open sides
+            assert len(list(m.open_neighbors(c))) <= 2
+        assert len(list(m.open_neighbors(m.start))) == 1
+        assert len(list(m.open_neighbors(m.goal))) == 1

@@ -2,7 +2,9 @@
 
 Real robot (Hamster USB dongle + camera):
     python -m hamster_super.server --model models/policy.npz --camera 0 \
-        --start 0,0,E --goal 5,3 --arena 6,4 [--map maps/race.txt] [--calib calib.json]
+        --start 0,0,E --arena 12,12 [--goal 5,3] [--map maps/race.txt] [--calib calib.json]
+    Without --goal (and without a 'G' in the map) the robot does the race task:
+    drive the single-path course to its dead end and come back to the start.
 
 Digital twin (no hardware needed):
     python -m hamster_super.server --model models/policy.npz --sim maps/example_02_maze.txt
@@ -78,7 +80,7 @@ def main():
     ap.add_argument("--flip", action="store_true", help="rotate camera image 180 deg")
     ap.add_argument("--port-hamster", default=None, help="serial port of the Hamster dongle")
     ap.add_argument("--start", default=None, help="start cell and heading, e.g. 0,0,E")
-    ap.add_argument("--goal", default=None, help="goal cell, e.g. 5,3")
+    ap.add_argument("--goal", default=None, help="goal cell, e.g. 5,3 (omit for the round trip)")
     ap.add_argument("--arena", default=None, help="arena size in cells W,H (planning bounds)")
     ap.add_argument("--calib", default=None, help="calibration JSON")
     ap.add_argument("--host", default="0.0.0.0")
@@ -97,15 +99,17 @@ def main():
         cfg.dr = DomainRandomization(enabled=True)
         hw = SimHardware(cfg, gmap, render=not args.sim_fast_rays)
         start, heading = gmap.start, hw.robot.th
-        goal = gmap.goal
+        goal = None if gmap.kind == "roundtrip" else gmap.goal
         bounds = gmap.cell_bounds()
         hw.reset_robot = lambda: hw.robot.reset((*cell_center(start), heading))
     else:
         from ..robot.hardware import CameraSource, HamsterHardware
-        if prior is None and not (args.start and args.goal):
-            ap.error("real robot needs --map or both --start and --goal")
+        goal = None
+        if prior is None and not args.start:
+            ap.error("real robot needs --map or --start")
         if prior is not None:
-            start, heading, goal = prior.start, prior.start_heading or 0.0, prior.goal
+            start, heading = prior.start, prior.start_heading or 0.0
+            goal = None if prior.kind == "roundtrip" else prior.goal
         if args.start:
             start, heading = parse_pose(args.start)
         if args.goal:
@@ -116,8 +120,9 @@ def main():
         elif prior is not None:
             bounds = prior.cell_bounds()
         else:
-            bounds = (min(start[0], goal[0]) - 6, min(start[1], goal[1]) - 6,
-                      max(start[0], goal[0]) + 6, max(start[1], goal[1]) + 6)
+            ref = goal if goal is not None else start
+            bounds = (min(start[0], ref[0]) - 12, min(start[1], ref[1]) - 12,
+                      max(start[0], ref[0]) + 12, max(start[1], ref[1]) + 12)
         cam = CameraSource(args.camera, flip=args.flip)
         hw = HamsterHardware(cam, port=args.port_hamster, **ir_cal)
 
@@ -125,7 +130,7 @@ def main():
     rt = Runtime(cfg, hw, numpy_policy(args.model), start_pose, goal, bounds, prior=prior,
                  perception=Perception(cfg.camera, seg))
     serve(rt, args.host, args.port)
-    print(f"HamsterSuper server on http://{args.host}:{args.port}  (start {start} -> goal {goal})", flush=True)
+    print(f"HamsterSuper server on http://{args.host}:{args.port}  (start {start} -> {'goal ' + str(goal) if goal else 'round trip'})", flush=True)
     if args.autostart:
         rt.start()
     try:

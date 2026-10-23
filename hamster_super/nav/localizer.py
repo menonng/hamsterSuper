@@ -126,7 +126,7 @@ class LatticeParticleFilter:
         d[stuck] = 0.0
         # rotation shares the unknown wheel-speed scale; fast spins + latency need wide noise
         dth = (dtheta * sc * (1 + rng.normal(0, 0.2, n)) + p[:, 4] * d
-               + rng.normal(0, 0.01 + 0.02 * abs(dist) + 0.05 * abs(dtheta), n))
+               + rng.normal(0, 0.01 + 0.02 * abs(dist) + 0.25 * abs(dtheta), n))
         th = p[:, 2] + 0.5 * dth
         p[:, 0] += d * np.cos(th)
         p[:, 1] += d * np.sin(th)

@@ -21,6 +21,12 @@ class Planner:
         self._bfs_walls: set | None = None
         self._bfs_dist: dict = {}
 
+    def set_goal(self, goal):
+        goal = tuple(goal)
+        if goal != self.goal:
+            self.goal = goal
+            self._bfs_walls = None          # distance field must be rebuilt
+
     def in_bounds(self, c):
         x0, y0, x1, y1 = self.bounds
         return x0 <= c[0] <= x1 and y0 <= c[1] <= y1

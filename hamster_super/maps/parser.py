@@ -3,7 +3,8 @@
 ASCII format (top row = north). Every '+' is a floor dot; '---' between two
 dots is a horizontal wall, '|' between two dot columns is a vertical wall.
 'S' marks the start cell (optionally followed by a heading letter E/N/W/S,
-e.g. 'SE'), 'G' marks the goal cell. Lines starting with '#' are comments.
+e.g. 'SE'), 'G' marks the goal cell. Without a 'G' the map is a round-trip
+course: drive to its dead end and come back to S. Lines starting with '#' are comments.
 
     +---+---+---+
     | SE    |   |
@@ -64,10 +65,16 @@ def parse_ascii(text: str, name: str = "") -> GridMap:
                         m.start_heading = DIRS[tail[0]]
                 if "G" in body:
                     goal = (i, cy)
-    if start is None or goal is None:
-        raise ValueError("ASCII map needs an 'S' (start) and a 'G' (goal) cell")
-    m.start, m.goal = start, goal
+    if start is None:
+        raise ValueError("ASCII map needs an 'S' (start) cell")
+    m.start = start
     m.bounds = (0, 0, n_cells_x - 1, n_cells_y - 1)
+    if goal is None:   # no 'G': round trip to the course's dead end and back
+        m.kind = "roundtrip"
+        d = m.distance_field(start)
+        m.goal = max(d, key=d.get)
+    else:
+        m.goal = goal
     return m
 
 
@@ -92,7 +99,7 @@ def to_ascii(m: GridMap) -> str:
                     if m.start_heading is not None:
                         hd = min(DIRS, key=lambda k: abs(_wrap(DIRS[k] - m.start_heading)))
                     body = (" S" + hd).ljust(3)
-                elif (i, cy) == m.goal:
+                elif (i, cy) == m.goal and m.kind != "roundtrip":
                     body = " G "
                 s += body
         rows.append(s)
@@ -111,7 +118,12 @@ def parse_json(data: dict | str, name: str = "") -> GridMap:
     for a, b in data["walls"]:
         m.walls.add(make_edge(tuple(a), tuple(b)))
     m.start = tuple(data["start"])
-    m.goal = tuple(data["goal"])
+    if data.get("goal") is None:
+        m.kind = "roundtrip"
+        d = m.distance_field(m.start)
+        m.goal = max(d, key=d.get)
+    else:
+        m.goal = tuple(data["goal"])
     hd = data.get("start_heading")
     if isinstance(hd, str):
         m.start_heading = DIRS[hd.upper()]
@@ -125,7 +137,7 @@ def parse_json(data: dict | str, name: str = "") -> GridMap:
 def to_json(m: GridMap) -> str:
     d = {"name": m.name,
          "walls": [[list(a), list(b)] for a, b in sorted(m.walls)],
-         "start": list(m.start), "goal": list(m.goal)}
+         "start": list(m.start), "goal": None if m.kind == "roundtrip" else list(m.goal)}
     if m.start_heading is not None:
         d["start_heading"] = m.start_heading
     if m.bounds is not None:

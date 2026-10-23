@@ -48,6 +48,44 @@ def _perfect_maze(m: GridMap, w: int, h: int, rng: np.random.Generator):
         stack.append(n)
 
 
+def generate_track(rng: np.random.Generator, level: int = 3) -> GridMap:
+    """Race course: one corridor without branches, closed at both ends.
+    Built as the longest path of a random perfect maze, then walled in."""
+    level = int(np.clip(level, 0, len(LEVELS) - 1))
+    lo, hi = LEVELS[level]
+    w = int(rng.integers(lo, hi + 1))
+    h = int(rng.integers(lo, hi + 1))
+    if level == 0 and rng.random() < 0.5:
+        w, h = int(rng.integers(2, 4)), 1
+    tree = GridMap()
+    _perfect_maze(tree, w, h, rng)
+    tree.bounds = (0, 0, w - 1, h - 1)
+    # longest path in the spanning tree: farthest from a random cell, then farthest from that
+    a = (int(rng.integers(w)), int(rng.integers(h)))
+    d = tree.distance_field(a)
+    b = max(d, key=d.get)
+    d = tree.distance_field(b)
+    e = max(d, key=d.get)
+    path = tree.shortest_path(b, e)
+    if rng.random() < 0.5:
+        path = path[::-1]
+    on = set(path)
+    m = GridMap(name=f"track-L{level}-{w}x{h}-{len(path)}", kind="roundtrip")
+    for i, c in enumerate(path):
+        keep = {path[j] for j in (i - 1, i + 1) if 0 <= j < len(path)}
+        for dx, dy in NEIGHBORS:
+            n = (c[0] + dx, c[1] + dy)
+            if n not in keep:
+                m.walls.add(edge_between(c, n))
+    m.start, m.goal = path[0], path[-1]
+    if len(path) > 1:
+        d0 = (path[1][0] - path[0][0], path[1][1] - path[0][1])
+        m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]
+    m.bounds = (0, 0, w - 1, h - 1)
+    del on
+    return m
+
+
 def generate(rng: np.random.Generator, level: int = 3, style: str | None = None) -> GridMap:
     level = int(np.clip(level, 0, len(LEVELS) - 1))
     lo, hi = LEVELS[level]
