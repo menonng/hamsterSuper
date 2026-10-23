@@ -192,7 +192,9 @@ def releases(run: Path):
         out.append({"tag": m.get("tag", f.parent.name), "iter": m.get("iter"),
                     "success_rate": er.get("success_rate"), "collisions": er.get("collisions_per_episode"),
                     "mean_time_s": er.get("mean_time_s"),
-                    "maps_success": (m.get("eval_maps") or {}).get("success_rate")})
+                    "maps_success": (m.get("eval_maps") or {}).get("success_rate"),
+                    "race_success": (m.get("eval_race") or {}).get("success_rate"),
+                    "level": er.get("level")})
     return sorted(out, key=lambda r: r["iter"] or 0)
 
 

@@ -114,7 +114,7 @@
       <div class="charts" id="charts"></div>
       <div class="card">
         <h2>GitHub releases (every 500 iterations)</h2>
-        <table id="rel"><thead><tr><th>Tag</th><th class="n">Success</th><th class="n">Example maps</th><th class="n">Collisions/ep</th><th class="n">Finish time</th></tr></thead><tbody></tbody></table>
+        <table id="rel"><thead><tr><th>Tag</th><th class="n">Success (level)</th><th class="n">Race size</th><th class="n">Example maps</th><th class="n">Collisions/ep</th><th class="n">Finish time</th></tr></thead><tbody></tbody></table>
       </div>
     </div>
   </div>
@@ -149,7 +149,7 @@ const CHARTS = [
   {key: 'ep_return', title: 'Mean episode return', f: fmt.f2},
   {key: 'finish_time', title: 'Finish time (successful episodes)', f: fmt.s, min: 0},
   {key: 'collisions', title: 'Wall-contact steps per episode', f: fmt.f1, min: 0},
-  {key: 'level', title: 'Curriculum level (0–5, maze size)', f: v => 'Lv ' + v, min: 0, max: 5, step: true},
+  {key: 'level', title: 'Curriculum level (0–8, course size)', f: v => 'Lv ' + v, min: 0, max: 8, step: true},
   {key: 'std', title: 'Policy exploration (std)', f: fmt.f3, min: 0},
 ];
 let rows = [], releasesData = [];
@@ -253,12 +253,13 @@ function renderTiles() {
 function renderReleases() {
   const tb = $('rel').querySelector('tbody'); tb.replaceChildren();
   if (!releasesData.length) {
-    const tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 5; td.textContent = 'No releases yet';
+    const tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 6; td.textContent = 'No releases yet';
     td.style.color = css('--muted'); tr.appendChild(td); tb.appendChild(tr); return;
   }
   for (const r of releasesData.slice().reverse()) {
     const tr = document.createElement('tr');
-    const cells = [r.tag, r.success_rate != null ? fmt.pct(r.success_rate) : '–', r.maps_success != null ? fmt.pct(r.maps_success) : '–',
+    const cells = [r.tag, r.success_rate != null ? fmt.pct(r.success_rate) + (r.level != null ? ` (Lv ${r.level})` : '') : '–',
+                   r.race_success != null ? fmt.pct(r.race_success) : '–', r.maps_success != null ? fmt.pct(r.maps_success) : '–',
                    r.collisions != null ? fmt.f1(r.collisions) : '–', r.mean_time_s != null ? fmt.s(r.mean_time_s) : '–'];
     cells.forEach((v, i) => { const td = document.createElement('td'); td.textContent = v; if (i) td.className = 'n'; tr.appendChild(td); });
     tb.appendChild(tr);

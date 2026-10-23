@@ -24,7 +24,7 @@ import torch.nn as nn
 
 from ..config import EnvConfig, save_json, to_dict
 from ..env.vec_env import VecEnv
-from ..maps.generator import LEVELS
+from ..maps.generator import LEVELS, RACE_LEVEL
 from ..nav.stack import obs_dim
 from .evaluate import evaluate, load_maps
 from .policy import ActorCritic, DeployPolicy, RunningNorm, export_numpy
@@ -300,7 +300,10 @@ class Trainer:
         pol = self.export(ts)
         t = time.time()
         metrics = {"tag": tag, "iter": self.iter, "episodes": self.episodes, "curriculum_level": self.cur.level}
-        metrics["eval_random"] = evaluate(pol, self.cfg, a.eval_episodes, level=len(LEVELS) - 1)
+        # at the size being learned now, and at the real race size (12 x 12 and up)
+        metrics["eval_random"] = evaluate(pol, self.cfg, a.eval_episodes, level=self.cur.level)
+        metrics["eval_random"]["level"] = self.cur.level
+        metrics["eval_race"] = evaluate(pol, self.cfg, max(10, a.eval_episodes // 3), level=RACE_LEVEL)
         if self.eval_maps:
             metrics["eval_maps"] = evaluate(pol, self.cfg, max(a.eval_episodes // 2, len(self.eval_maps)),
                                             maps=self.eval_maps)

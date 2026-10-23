@@ -228,9 +228,15 @@ def release_notes(metrics: dict) -> str:
              f"- PPO iterations: {metrics.get('iter')} / episodes: {metrics.get('episodes')}\n"
              f"- Curriculum level: {metrics.get('curriculum_level')}\n")
     if er:
-        notes += (f"- Random maps (hardest level, domain randomization ON): success rate "
+        lvl = er.get("level", "hardest")
+        notes += (f"- Random courses at curriculum level {lvl} (domain randomization ON): success rate "
                   f"**{er['success_rate']:.1%}**, collisions per episode {er['collisions_per_episode']:.2f}, "
                   f"mean finish time {'-' if t is None else round(t, 2)}s\n")
+    race = metrics.get("eval_race")
+    if race:
+        rt = race.get("mean_time_s")
+        notes += (f"- Race-size courses (10-16 cells per side, round trip): success rate "
+                  f"**{race['success_rate']:.1%}**, mean finish time {'-' if rt is None else round(rt, 1)}s\n")
     if metrics.get("eval_maps"):
         notes += f"- Example maps: success rate **{metrics['eval_maps']['success_rate']:.1%}**\n"
     notes += ("\n### Files\n- `policy_ts.pt`: TorchScript model for the real robot/server "

@@ -8,7 +8,8 @@ import numpy as np
 from .grid_map import NEIGHBORS, GridMap, edge_between, make_edge
 
 # (min cells, max cells) per side for each curriculum level
-LEVELS = [(2, 3), (3, 4), (3, 6), (4, 8), (5, 10), (6, 12)]
+LEVELS = [(2, 3), (3, 4), (3, 6), (4, 8), (5, 10), (6, 12), (8, 14), (10, 16), (12, 20)]
+RACE_LEVEL = 7          # 10-16 cells per side: the real race courses (12 x 12 and up)
 STYLES = ("perfect", "braid", "rooms", "sparse")
 
 
