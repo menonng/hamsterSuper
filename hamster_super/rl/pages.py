@@ -99,6 +99,8 @@ def read_log(run: Path) -> list:
             except json.JSONDecodeError:
                 continue
             rows.append({k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items() if k in LOG_KEYS})
+    # a resumed run re-logs a few iterations: keep the newest row per iteration
+    rows = sorted({r["iter"]: r for r in rows if "iter" in r}.values(), key=lambda r: r["iter"])
     if len(rows) > MAX_ROWS:   # keep the shape, drop points evenly (always keep the newest)
         idx = np.unique(np.r_[np.linspace(0, len(rows) - 1, MAX_ROWS).astype(int), len(rows) - 1])
         rows = [rows[i] for i in idx]
