@@ -14,6 +14,7 @@ from collections import deque
 import numpy as np
 
 from ..config import GRID_SPACING, WALL_THICKNESS, RobotSpec
+from ..maps.grid_map import edge_between
 
 G = GRID_SPACING
 
@@ -116,9 +117,12 @@ class LatticeParticleFilter:
         self.w = np.full(n, 1.0 / n)
         self.last_used = 0
 
-    def predict(self, dist: float, dtheta: float):
-        """dist / dtheta: odometry increments at nominal calibration."""
+    def predict(self, dist: float, dtheta: float, walls=None):
+        """dist / dtheta: odometry increments at nominal calibration.
+        walls: edges known to be walls; a particle that would drive through one
+        is (almost) impossible - the real robot cannot pass a rigid wall."""
         n, p, rng = self.n, self.p, self.rng
+        before = np.floor(p[:, :2] / G).astype(int) if walls else None
         sc = p[:, 3]
         d = dist * sc * (1 + rng.normal(0, 0.08, n)) + rng.normal(0, 0.05 + 0.1 * abs(dist), n)
         # being pinned against a wall: some particles do not move at all
@@ -133,6 +137,14 @@ class LatticeParticleFilter:
         p[:, 2] = th + 0.5 * dth
         p[:, 3] = np.clip(p[:, 3] + rng.normal(0, 0.003, n), 0.5, 1.6)
         p[:, 4] = np.clip(p[:, 4] + rng.normal(0, 0.0005, n), -0.05, 0.05)
+        if before is not None:
+            after = np.floor(p[:, :2] / G).astype(int)
+            moved = np.flatnonzero(np.any(after != before, axis=1))
+            if moved.size:
+                bad = [i for i in moved if _crosses(tuple(before[i]), tuple(after[i]), walls)]
+                if bad:
+                    self.w[bad] *= 0.02
+                    self.w /= self.w.sum()
 
     def correct_heading(self, wall_angle: float, gain: float = 0.7, gate: float = math.radians(12),
                         noise: float = 0.02) -> bool:
@@ -207,6 +219,18 @@ class LatticeParticleFilter:
     @property
     def scale(self) -> float:
         return float(np.sum(self.w * self.p[:, 3]))
+
+
+def _crosses(a, b, walls) -> bool:
+    """Moving from cell a to cell b passes a wall (diagonal moves: both ways blocked)."""
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    if abs(dx) + abs(dy) == 1:
+        return edge_between(a, b) in walls
+    if abs(dx) == 1 and abs(dy) == 1:
+        m1, m2 = (b[0], a[1]), (a[0], b[1])
+        return (edge_between(a, m1) in walls or edge_between(m1, b) in walls) and \
+            (edge_between(a, m2) in walls or edge_between(m2, b) in walls)
+    return False
 
 
 _CAND = np.radians(np.arange(-45.0, 45.0, 1.0))

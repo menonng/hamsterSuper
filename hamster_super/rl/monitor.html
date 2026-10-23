@@ -103,7 +103,7 @@
         <span><i class="sw" style="background:var(--green)"></i>Racing line</span>
         <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT corner</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
-        <span><i class="sw" style="background:var(--orange)"></i>Estimated pose</span>
+        <span><i class="sw" style="background:var(--orange)"></i>Estimated pose (where the robot thinks it is; walls are mapped from here)</span>
         <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
         <span><i class="sw box" style="background:var(--red)"></i>Goal</span>
       </div>
@@ -493,6 +493,39 @@ function init() {
   scene.add(sun, sun.target);
 
   const V = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+
+  // room around the course: a dome textured with a random background per episode
+  // (the same image set the camera is trained against; procedural if none exist)
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.62),
+    new THREE.MeshBasicMaterial({side: THREE.BackSide, fog: false}));
+  scene.add(dome);
+  let bgList = [];
+  fetch('data/backgrounds.json').then(r => r.ok ? r.json() : []).then(l => { bgList = l || []; }).catch(() => {});
+  function proceduralBg() {
+    const c = document.createElement('canvas'); c.width = 1024; c.height = 256;
+    const g = c.getContext('2d'), rnd = (a, b) => a + Math.random() * (b - a);
+    const gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, `hsl(${rnd(0, 360)},${rnd(0, 40)}%,${rnd(30, 90)}%)`);
+    gr.addColorStop(1, `hsl(${rnd(0, 360)},${rnd(0, 40)}%,${rnd(10, 70)}%)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 1024, 256);
+    for (let i = 0; i < rnd(4, 14); i++) {      // furniture, posters, windows
+      g.fillStyle = Math.random() < .4 ? `hsl(0,0%,${rnd(85, 100)}%)` : `hsl(${rnd(0, 360)},${rnd(20, 70)}%,${rnd(20, 80)}%)`;
+      g.fillRect(rnd(0, 1024), rnd(0, 230), rnd(20, 240), rnd(16, 120));
+    }
+    for (let i = 0; i < rnd(0, 6); i++) {       // people
+      const x = rnd(0, 1024), w = rnd(14, 40), h = rnd(90, 230);
+      g.fillStyle = `hsl(${rnd(0, 360)},${rnd(10, 60)}%,${rnd(15, 75)}%)`;
+      g.beginPath(); g.ellipse(x, 256, w, h, 0, Math.PI, 2 * Math.PI); g.fill();
+      g.beginPath(); g.arc(x, 256 - h - w * .7, w * .6, 0, 2 * Math.PI); g.fill();
+    }
+    return new THREE.CanvasTexture(c);
+  }
+  function pickBackground() {
+    const use = tex => { tex.colorSpace = THREE.SRGBColorSpace; dome.material.map?.dispose(); dome.material.map = tex; dome.material.needsUpdate = true; };
+    if (bgList.length && Math.random() > .3)
+      new THREE.TextureLoader().load(bgList[Math.floor(Math.random() * bgList.length)], use, undefined, () => use(proceduralBg()));
+    else use(proceduralBg());
+  }
   let mapGroup = null, mapKey = null, center = new THREE.Vector3(), span = 60;
   let foundMesh = null, foundKey = '';
   const MAXW = 600;
@@ -601,7 +634,9 @@ function init() {
     const sc = sun.shadow.camera; sc.left = sc.bottom = -span; sc.right = sc.top = span; sc.far = span * 4; sc.updateProjectionMatrix();
     controls.target.copy(center);
     cam.position.copy(center).add(new THREE.Vector3(0, span * .9, span * .75));
-    smooth = null;
+    dome.position.copy(center); dome.scale.setScalar(span * 2.5);
+    pickBackground();
+    smooth = null; smoothEst = null;
   }
   function wallMatrix([a, b], grow, cap) {
     const horiz = a[1] === b[1];
@@ -612,7 +647,7 @@ function init() {
   }
 
   // --- per-frame data
-  let target = null, smooth = null, est = null, visible = false, camMode = 'chase';
+  let target = null, smooth = null, est = null, smoothEst = null, visible = false, camMode = 'chase';
   const angLerp = (a, b, t) => a + (((b - a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
   function update(s) {
     if (!s || !s.bounds) return;
@@ -632,9 +667,10 @@ function init() {
     if (!smooth || Math.hypot(smooth[0] - target[0], smooth[1] - target[1]) > 15) smooth = target.slice();
     // rays from the camera's floor point
     const pa = rayGeo.attributes.position.array; let k = 0;
-    const [px, py, th] = s.pose, cx = px + s.cam_forward * Math.cos(th), cy = py + s.cam_forward * Math.sin(th);
-    s.rays.forEach((r, i) => { const a = th + s.ray_angles[i];
-      pa.set([cx, 0.15, -cy, cx + r * Math.cos(a), 0.15, -(cy + r * Math.sin(a))], k); k += 6; });
+    // in the robot frame: the ray fan moves with the (smoothed) robot model
+    const cf = s.cam_forward;
+    s.rays.forEach((r, i) => { const a = s.ray_angles[i];
+      pa.set([cf, 0.15, 0, cf + r * Math.cos(a), 0.15, -r * Math.sin(a)], k); k += 6; });
     rayGeo.setDrawRange(0, s.rays.length * 2); rayGeo.attributes.position.needsUpdate = true;
     const pp = pathGeo.attributes.position.array; k = 0;
     const pts = s.line && s.line.length > 1 ? s.line
@@ -647,7 +683,7 @@ function init() {
     tr.forEach(q => { tp.set([q[0], 0.1, -q[1]], k); k += 3; });
     trailGeo.setDrawRange(0, tr.length); trailGeo.attributes.position.needsUpdate = true;
     ghost.visible = !!est && camMode !== 'robot';
-    if (est) { ghost.position.copy(V(est[0], est[1])); ghost.rotation.y = est[2]; }
+    if (est && (!smoothEst || Math.hypot(smoothEst[0] - est[0], smoothEst[1] - est[1]) > 15)) smoothEst = est.slice();
   }
 
   // corner tags (IN / MID / OUT) floating above turning cells
@@ -699,6 +735,12 @@ function init() {
     smooth[2] = angLerp(smooth[2], target[2], .35);
     const [x, y, th] = smooth, fwd = new THREE.Vector3(Math.cos(th), 0, -Math.sin(th));
     robot.position.copy(V(x, y)); robot.rotation.y = th;
+    rays.position.copy(V(x, y)); rays.rotation.y = th;
+    if (est && smoothEst) {   // same interpolation as the robot model: both move at the same pace
+      smoothEst[0] += (est[0] - smoothEst[0]) * .35; smoothEst[1] += (est[1] - smoothEst[1]) * .35;
+      smoothEst[2] = angLerp(smoothEst[2], est[2], .35);
+      ghost.position.copy(V(smoothEst[0], smoothEst[1])); ghost.rotation.y = smoothEst[2];
+    }
     if (camMode === 'chase') {
       cam.fov = 55; cam.position.copy(V(x, y, 0)).addScaledVector(fwd, -24).add(new THREE.Vector3(0, 22, 0));
       cam.lookAt(V(x, y, 0).addScaledVector(fwd, 10));

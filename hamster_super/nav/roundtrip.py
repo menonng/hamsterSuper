@@ -78,13 +78,14 @@ class RoundTrip:
                      or edge_between(c, (c[0] + dx, c[1] + dy)) in walls)
         return closed >= 3
 
-    def goal(self, cell, pos, heading, walls, seen=None, free=None, front=None):
+    def goal(self, cell, pos, heading, walls, seen=None, free=None, front=None, strong=None):
         """Update the phase and return the cell the planner should head for.
         front: distance (cm) to the nearest wall straight ahead measured right now
         (camera / IR); a dead end only counts when the sensors confirm it."""
         cell = tuple(cell)
         self.t += 1
         self.front = front
+        self.strong = strong        # walls seen many times (weak ones may be false detections)
         self.seen = seen if seen is not None else set()
         self.free = free if free is not None else set()
         if self.mode in ("lap", "race"):
@@ -115,7 +116,7 @@ class RoundTrip:
             self.cells_driven += 1
         if self.phase == DONE:
             return self.start
-        covered = len(self.visited) >= max(4, self.min_coverage)
+        covered = self.covered(walls)
         if cell == self.start and self.cells_driven >= self.min_lap_cells and covered \
                 and came_from not in (self.start, self.ahead):
             self.phase = DONE                      # entered the start cell from behind: lap complete
@@ -140,10 +141,32 @@ class RoundTrip:
         behind = self._behind()
         explore_walls = walls | {edge_between(self.start, behind)} if behind is not None else walls
         target = self._explore_target(cell, heading, explore_walls)
+        if self.phase == BACK and not covered and self.strong is not None:
+            # the course is not done yet, so a weakly seen wall must be closing the
+            # way on: look past the weak walls (driving closer re-checks them)
+            self.phase = OUT
+            strong = self.strong | ({edge_between(self.start, behind)} if behind is not None else set())
+            target = self._explore_target(cell, heading, strong)
         if self.phase == BACK:                     # nothing unvisited left: head for the start
             self.phase = OUT
             return self.start
         return target
+
+    def covered(self, walls) -> bool:
+        """Has the robot been through (nearly) the whole arena? Cells driven into
+        count, and cells of a wide section it drove past (an open 2x2 square)."""
+        if len(self.visited) < 4:
+            return False
+        if self.min_coverage <= 0 or len(self.visited) >= self.min_coverage:
+            return True
+        need = self.min_coverage - len(self.visited)
+        extra = 0
+        for c in self.seen:
+            if c not in self.visited and self.in_bounds(c) and self._passed_by(c, walls):
+                extra += 1
+                if extra >= need:
+                    return True
+        return False
 
     def _passed_by(self, c, walls) -> bool:
         """In a wide section the robot drives past cells without entering them.

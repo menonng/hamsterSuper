@@ -101,3 +101,26 @@ def test_pitch_calibration_recovers_tilt():
     v = wall_base_row(wall_mask_bright(img), range(spec.width // 2 - 6, spec.width // 2 + 7))
     est = pitch_from_base_row(v, cfg.camera, 10.0)
     assert abs(est - true_pitch) < math.radians(1.0)
+
+
+def test_perception_ignores_room_background():
+    """Random rooms (people, white furniture) around the course must not create walls."""
+    from hamster_super.sim.backgrounds import BackgroundBank
+    cfg = EnvConfig()
+    m = load_map("maps/example_02_maze.txt")
+    boxes = m.wall_boxes()
+    arena = (boxes[:, 0].min(), boxes[:, 1].min(), boxes[:, 2].max(), boxes[:, 3].max())
+    ren, rays, per = Renderer(cfg.camera), DepthRays(cfg.camera), Perception(cfg.camera)
+    bank = BackgroundBank(folder="/nonexistent")          # procedural rooms only
+    rng = np.random.default_rng(4)
+    errs = []
+    while len(errs) < 40:
+        pose = (rng.uniform(3, 87), rng.uniform(3, 69), rng.uniform(-math.pi, math.pi))
+        if circle_penetration(np.array(pose[:2]), 2.3, boxes)[0] > 0:
+            continue
+        img = ren.render(pose, boxes, rng, background=bank.sample(rng), arena=arena)
+        tru = np.clip(rays.true_ranges(pose, boxes), rays.r_min, cfg.camera.max_range)
+        errs.append(np.abs(per.rays(img) - tru))
+    e = np.concatenate(errs)
+    assert np.median(e) < 0.5
+    assert (e > 2.0).mean() < 0.06

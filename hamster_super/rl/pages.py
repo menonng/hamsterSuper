@@ -124,6 +124,17 @@ def export_site(run: Path, out: Path, episodes: list | None = None, title: str =
     now = int(time.time())
     (data / "log.json").write_text(json.dumps({"updated": now, "run": title or run.name, "rows": read_log(run)}))
     (data / "releases.json").write_text(json.dumps(releases(run)))
+    # room backgrounds for the dome around the 3D course (same images as in training)
+    from ..sim.backgrounds import DEFAULT_DIR
+    import shutil
+    names = []
+    if DEFAULT_DIR.is_dir():
+        (out / "backgrounds").mkdir(exist_ok=True)
+        for f in sorted(DEFAULT_DIR.iterdir()):
+            if f.suffix.lower() in (".png", ".jpg", ".jpeg"):
+                shutil.copy2(f, out / "backgrounds" / f.name)
+                names.append("backgrounds/" + f.name)
+    (data / "backgrounds.json").write_text(json.dumps(names))
     if episodes is not None:
         (data / "replays.json").write_text(json.dumps({"updated": now, "episodes": episodes},
                                                       separators=(",", ":")))

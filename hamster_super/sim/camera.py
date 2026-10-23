@@ -124,7 +124,11 @@ class Renderer:
         self.dot_radius = dot_radius
 
     def render(self, pose, boxes: np.ndarray, rng: np.random.Generator | None = None,
-               colors: dict | None = None) -> np.ndarray:
+               colors: dict | None = None, background: np.ndarray | None = None,
+               arena=None) -> np.ndarray:
+        """background: panorama (see sim.backgrounds) wrapped around the arena as a dome;
+        arena: (x0, y0, x1, y1) cm extent of the black race floor - beyond it the
+        line of sight ends in the room (the dome) instead of on black floor."""
         spec = self.cam.spec
         x, y, th = pose
         c, s = math.cos(th), math.sin(th)
@@ -177,10 +181,29 @@ class Renderer:
             glare = rng.uniform(0, 45) * np.exp(-((gp[:, 0] - cam_xy[0] - cx_) ** 2 + (gp[:, 1] - cam_xy[1] - cy_) ** 2) / 300)
             sub += glare[:, None]
         sub[dot] = dotc
+        if background is not None:
+            from .backgrounds import lookup
+            if arena is not None:
+                x0, y0, x1, y1 = arena
+                out = (gp[:, 0] < x0) | (gp[:, 0] > x1) | (gp[:, 1] < y0) | (gp[:, 1] > y1)
+            else:
+                out = s_ground > far
+            out &= ~is_top & ~is_face
+            if out.any():
+                el = np.arctan2(dd[out, 2], horiz[out])
+                az = np.arctan2(hdir[out, 1], hdir[out, 0])
+                sub[out] = lookup(background, az, el)
         sub[is_top] = top
         sub[is_face] = face
         sub = np.clip(sub, 0, 255).astype(np.uint8)
         img[down] = sub
+        if background is not None:
+            from .backgrounds import lookup
+            up = ~down
+            du = d[up]
+            hu = du[:, :2] @ R.T
+            img[up] = lookup(background, np.arctan2(hu[:, 1], hu[:, 0]),
+                             np.arctan2(du[:, 2], np.linalg.norm(du[:, :2], axis=1)))
         img = img.reshape(spec.height, spec.width, 3)
         if rng is not None:  # sensor noise + exposure jitter
             gain = rng.uniform(0.8, 1.2)

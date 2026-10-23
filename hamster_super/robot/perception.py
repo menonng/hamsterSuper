@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..config import CameraSpec
-from ..sim.camera import RayLUT, wall_mask_bright, wall_mask_dark
+from ..sim.camera import RayLUT, otsu_threshold, wall_mask_bright, wall_mask_dark
 
 
 @dataclass
@@ -44,8 +44,15 @@ class Perception:
             mask = cv2.inRange(hsv, np.array(s.hsv_lo, np.uint8), np.array(s.hsv_hi, np.uint8)) > 0
         elif s.method == "dark":
             mask = wall_mask_dark(rgb, s.dark_threshold)
+        elif s.method == "otsu":
+            # threshold from the floor region only: whatever is above the walls
+            # (the room, people, a white wall behind the course) must not shift it
+            gray = rgb.astype(np.float32).mean(axis=-1)
+            lut = self.lut
+            floor_px = gray[lut.v[lut.valid], lut.u[lut.valid]]
+            mask = gray > float(np.clip(otsu_threshold(floor_px), 70, 200))
         else:
-            mask = wall_mask_bright(rgb, None if s.method == "otsu" else s.bright_threshold)
+            mask = wall_mask_bright(rgb, s.bright_threshold)
         if s.open_kernel > 1:
             try:
                 import cv2

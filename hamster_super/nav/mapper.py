@@ -50,6 +50,10 @@ class BeliefMap:
             self._cache = self.fixed | {e for e, s in self.scores.items() if s >= self.threshold}
         return self._cache
 
+    def strong_walls(self, min_score: float = 4.0) -> set:
+        """Walls with plenty of evidence (fixed ones included)."""
+        return self.fixed | {e for e, sc in self.scores.items() if sc >= min_score}
+
     def _state(self, s: float) -> int:
         return 1 if s >= self.threshold else (-1 if s <= self.free_threshold else 0)
 

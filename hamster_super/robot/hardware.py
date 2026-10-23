@@ -104,6 +104,11 @@ class SimHardware:
         self.boxes = gmap.wall_boxes()
         self.rays = DepthRays(cfg.camera)
         self.renderer = Renderer(cfg.camera) if render else None
+        if render:   # a random room around the course (people, posters, lights)
+            from ..sim.backgrounds import BackgroundBank
+            self.background = BackgroundBank().sample(self.rng)
+            b = self.boxes
+            self.arena = (b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max()) if len(b) else None
         heading = gmap.start_heading if gmap.start_heading is not None else (gmap.free_headings(gmap.start) or [0.0])[0]
         c = cell_center(gmap.start)
         self.robot.reset((c[0], c[1], heading))
@@ -114,7 +119,8 @@ class SimHardware:
     def read(self):
         ir = self.robot.ir(self.boxes)
         if self.renderer is not None:
-            return self.renderer.render(self.robot.pose, self.boxes, self.rng), None, ir
+            return self.renderer.render(self.robot.pose, self.boxes, self.rng, background=self.background,
+                                        arena=self.arena), None, ir
         return None, self.rays.measure(self.robot.pose, self.boxes, self.cfg.dr, self.rng), ir
 
     def set_wheels(self, left, right):

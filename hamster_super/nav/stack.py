@@ -96,7 +96,7 @@ class NavStack:
             d = before[:2] - self.odom.pose[:2]
             dist = float(np.hypot(*d)) * (1 if np.dot(-d, [math.cos(before[2]), math.sin(before[2])]) >= 0 else -1)
             dth = float((self.odom.pose[2] - before[2] + math.pi) % (2 * math.pi) - math.pi)
-            self.pf.predict(dist, dth)
+            self.pf.predict(dist, dth, walls=self.belief.strong_walls())
             pts = self.wall_points(rays, ir)
             wa = wall_orientation(pts[:self._n_cam_pts])
             # while spinning fast, latency makes the predicted heading unreliable
@@ -115,7 +115,7 @@ class NavStack:
         if self.roundtrip is not None:
             self.planner.set_goal(self.roundtrip.goal(cell_of(pose), pose, pose[2], self.belief.walls,
                                                       seen=self.belief.seen, free=self.belief.free_edges,
-                                                      front=front_distance(rays, ir)))
+                                                      front=front_distance(rays, ir), strong=self.belief.strong_walls()))
         self.planner.update(self.belief.walls, cell_of(pose))
         bias = float(last_action[2]) if len(last_action) > 2 else 0.0      # learned inside/outside line choice
         self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0, bias=bias)
