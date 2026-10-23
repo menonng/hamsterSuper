@@ -90,7 +90,8 @@ class Trainer:
         if args.release_every > 0 and not args.no_release:
             from ..release.github_release import GitHubReleaser
             try:
-                self.releaser = GitHubReleaser(repo=args.repo, dry_run=args.release_dry_run)
+                self.releaser = GitHubReleaser(repo=args.repo, dry_run=args.release_dry_run,
+                                               method=args.release_method)
             except Exception as e:
                 print(f"[release] disabled: {e}")
         save_json(self.cfg, self.out / "env_config.json")
@@ -308,19 +309,8 @@ class Trainer:
             self.best_eval = sr
             self.save(self.out / "best.pt")
             self.export(self.out / "best_policy_ts.pt")
-        er = metrics["eval_random"]
-        notes = (f"## HamsterSuper autonomous-driving policy `{tag}`\n\n"
-                 f"- PPO iterations: {self.iter} / episodes: {self.episodes}\n"
-                 f"- Curriculum level: {self.cur.level}\n"
-                 f"- Random maps (hardest level, domain randomization ON): success rate **{er['success_rate']:.1%}**, "
-                 f"collisions per episode {er['collisions_per_episode']:.2f}, "
-                 f"mean finish time {er['mean_time_s'] if er['mean_time_s'] is None else round(er['mean_time_s'], 2)}s\n")
-        if "eval_maps" in metrics:
-            notes += f"- Example maps: success rate **{metrics['eval_maps']['success_rate']:.1%}**\n"
-        notes += ("\n### Files\n- `policy_ts.pt`: TorchScript model for the real robot/server "
-                  "(`python -m hamster_super.server --model policy_ts.pt`)\n"
-                  "- `policy.npz`: the same policy for NumPy-only inference (no torch, e.g. Raspberry Pi)\n"
-                  "- `checkpoint.pt`: resume training (`--resume`)\n- `metrics.json`, `env_config.json`\n")
+        from ..release.github_release import release_notes
+        notes = release_notes(metrics)
         print(f"[release] {tag}: eval success {sr:.1%}", flush=True)
         if self.releaser:
             self.releaser.publish(tag, f"HamsterSuper {tag}", notes,
@@ -351,6 +341,8 @@ def main():
     ap.add_argument("--release-unit", choices=["iter", "episode"], default="iter")
     ap.add_argument("--tag-prefix", default="model")
     ap.add_argument("--repo", default=None, help="owner/repo (default: git origin)")
+    ap.add_argument("--release-method", choices=["auto", "gh", "api", "actions"], default="auto",
+                    help="auto: gh CLI if logged in, else GITHUB_TOKEN, else tag push + GitHub Actions")
     ap.add_argument("--release-dry-run", action="store_true")
     ap.add_argument("--no-release", action="store_true")
     ap.add_argument("--pages-every", type=int, default=0,

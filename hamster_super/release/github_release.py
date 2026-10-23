@@ -1,8 +1,12 @@
 """Publish trained models as GitHub Releases.
 
-Uses the `gh` CLI when it is installed and authenticated, otherwise the
-GitHub REST API with a token from $GITHUB_TOKEN (or $GH_TOKEN). The target
-repository is read from `git remote get-url origin` unless given.
+Methods (``method="auto"`` picks the first that is available):
+  * ``gh``      - the `gh` CLI, when installed and authenticated
+  * ``api``     - the GitHub REST API with $GITHUB_TOKEN (or $GH_TOKEN)
+  * ``actions`` - needs only `git push`: a commit with the model files under
+                  release/ is tagged and the tag pushed; the workflow
+                  .github/workflows/model-release.yml then creates the release.
+The target repository is read from `git remote get-url origin` unless given.
 """
 from __future__ import annotations
 
@@ -34,8 +38,10 @@ def detect_repo(cwd=None) -> str:
 
 
 class GitHubReleaser:
-    def __init__(self, repo: str | None = None, cwd=None, dry_run: bool = False, target: str | None = None):
+    def __init__(self, repo: str | None = None, cwd=None, dry_run: bool = False, target: str | None = None,
+                 method: str = "auto", remote: str = "origin"):
         self.cwd = cwd
+        self.method, self.remote = method, remote
         self.dry_run = dry_run
         self.repo = repo or detect_repo(cwd)
         self.target = target or self._pushed_head()
@@ -81,16 +87,53 @@ class GitHubReleaser:
             print(msg, flush=True)
             self.log.append(msg)
             return None
-        if shutil.which("gh") and self._gh_ok():
+        method = self.method
+        if method == "auto":
+            method = "gh" if shutil.which("gh") and self._gh_ok() else ("api" if self.token else "actions")
+        if method == "gh":
             url = self._publish_gh(tag, title, notes, files)
-        elif self.token:
+        elif method == "api":
+            if not self.token:
+                raise RuntimeError("method 'api' needs GITHUB_TOKEN")
             url = self._publish_rest(tag, title, notes, files)
         else:
-            raise RuntimeError("no GitHub credentials: run `gh auth login` or set GITHUB_TOKEN")
+            url = self._publish_actions(tag, title, notes, files)
         msg = f"[release] published {tag} -> {url}"
         print(msg, flush=True)
         self.log.append(msg)
         return url
+
+    def _publish_actions(self, tag, title, notes, files):
+        """Commit HEAD's tree + release/<files> + .release-notes.md (parent HEAD),
+        tag it and push only the tag. Uses a temporary index, so the working
+        tree and branches are untouched."""
+        env = {**os.environ, "GIT_INDEX_FILE": str(Path(_git("rev-parse", "--git-dir", cwd=self.cwd)).resolve()
+                                                   / f"index-release-{tag}")}
+
+        def g(*args, inp=None):
+            return subprocess.run(["git", *args], cwd=self.cwd, env=env, check=True, capture_output=True,
+                                  text=inp is None or isinstance(inp, str), input=inp).stdout
+
+        try:
+            g("read-tree", "HEAD")
+            entries = [(f, f"release/{Path(f).name}") for f in files]
+            notes_file = Path(env["GIT_INDEX_FILE"] + ".md")
+            notes_file.write_text(f"# {title}\n\n{notes}", encoding="utf-8")
+            entries.append((str(notes_file), ".release-notes.md"))
+            for src, dst in entries:
+                sha = g("hash-object", "-w", src).strip()
+                g("update-index", "--add", "--cacheinfo", f"100644,{sha},{dst}")
+            tree = g("write-tree").strip()
+            commit = g("commit-tree", tree, "-p", "HEAD", "-m", f"Release {tag}").strip()
+            g("tag", "-f", tag, commit)
+            res = subprocess.run(["git", "push", "-f", self.remote, f"refs/tags/{tag}"], cwd=self.cwd,
+                                 capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip() or res.stdout.strip())
+        finally:
+            for p in (Path(env["GIT_INDEX_FILE"]), Path(env["GIT_INDEX_FILE"] + ".md")):
+                p.unlink(missing_ok=True)
+        return f"https://github.com/{self.repo}/releases/tag/{tag} (created by the 'Model release' workflow)"
 
     def _gh_ok(self) -> bool:
         return subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0
@@ -123,3 +166,44 @@ class GitHubReleaser:
             self._api("POST", f"{upload}?name={urllib.parse.quote(name)}", Path(f).read_bytes(),
                       headers={"Content-Type": ctype}, raw=True)
         return rel.get("html_url")
+
+
+def release_notes(metrics: dict) -> str:
+    """Markdown release notes from a release's metrics.json."""
+    tag = metrics.get("tag", "")
+    er = metrics.get("eval_random", {})
+    t = er.get("mean_time_s")
+    notes = (f"## HamsterSuper autonomous-driving policy `{tag}`\n\n"
+             f"- PPO iterations: {metrics.get('iter')} / episodes: {metrics.get('episodes')}\n"
+             f"- Curriculum level: {metrics.get('curriculum_level')}\n")
+    if er:
+        notes += (f"- Random maps (hardest level, domain randomization ON): success rate "
+                  f"**{er['success_rate']:.1%}**, collisions per episode {er['collisions_per_episode']:.2f}, "
+                  f"mean finish time {'-' if t is None else round(t, 2)}s\n")
+    if metrics.get("eval_maps"):
+        notes += f"- Example maps: success rate **{metrics['eval_maps']['success_rate']:.1%}**\n"
+    notes += ("\n### Files\n- `policy_ts.pt`: TorchScript model for the real robot/server "
+              "(`python -m hamster_super.server --model policy_ts.pt`)\n"
+              "- `policy.npz`: the same policy for NumPy-only inference (no torch, e.g. Raspberry Pi)\n"
+              "- `checkpoint.pt`: resume training (`--resume`)\n- `metrics.json`, `env_config.json`\n")
+    return notes
+
+
+def main():
+    """Publish an existing release folder (runs/<run>/releases/<tag>)."""
+    import argparse
+    ap = argparse.ArgumentParser(description="Publish saved model releases to GitHub")
+    ap.add_argument("dirs", nargs="+", help="release folders containing metrics.json")
+    ap.add_argument("--method", choices=["auto", "gh", "api", "actions"], default="auto")
+    ap.add_argument("--repo", default=None)
+    args = ap.parse_args()
+    rel = GitHubReleaser(repo=args.repo, method=args.method)
+    for d in map(Path, args.dirs):
+        m = json.loads((d / "metrics.json").read_text())
+        tag = m.get("tag", d.name)
+        files = [d / n for n in ("policy_ts.pt", "policy.npz", "checkpoint.pt", "metrics.json", "env_config.json")]
+        rel.publish(tag, f"HamsterSuper {tag}", release_notes(m), files, background=False)
+
+
+if __name__ == "__main__":
+    main()
