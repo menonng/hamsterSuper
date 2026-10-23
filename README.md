@@ -63,8 +63,8 @@ python -m hamster_super.rl.pages --run runs/ppo                                 
 * 50 iteration마다 학습 곡선·릴리스 결과·최신 모델의 주행 녹화 3판을 JSON으로 만들어 `gh-pages` 브랜치에 푸시
   (매번 단일 커밋으로 덮어써서 저장소 용량이 늘지 않음). 페이지는 1분마다 데이터를 새로 읽고, 녹화를 애니메이션으로 재생합니다.
 * 녹화·푸시는 백그라운드 스레드라 학습을 멈추지 않습니다. 푸시에는 `git push` 권한(로그인된 git)이 필요합니다.
-* **최초 1회 설정**: GitHub 저장소 → Settings → Pages → Build and deployment → Source: *Deploy from a branch*,
-  Branch: `gh-pages` / `(root)` → Save.
+* 배포는 GitHub Actions가 자동으로: `gh-pages` 푸시 → `Pages snapshot` 워크플로 → 기본 브랜치의 `Pages` 워크플로가
+  배포 (Pages 소스가 "GitHub Actions"가 아니면 스스로 전환). 별도 설정 불필요.
 
 ### 실시간 학습 모니터 (HTML)
 
