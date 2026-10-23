@@ -94,6 +94,13 @@ class Trainer:
             except Exception as e:
                 print(f"[release] disabled: {e}")
         save_json(self.cfg, self.out / "env_config.json")
+        self.pages = None
+        if args.pages_every > 0:
+            from .pages import PagesPublisher
+            try:
+                self.pages = PagesPublisher(self.out)
+            except Exception as e:
+                print(f"[pages] disabled: {e}")
 
     # ------------------------------------------------------------ checkpoint
     def state(self):
@@ -197,6 +204,8 @@ class Trainer:
                           flush=True)
                 if self.iter % a.save_every == 0:
                     self.save(self.out / "last.pt")
+                if self.pages and self.iter % a.pages_every == 0:
+                    self._publish_pages()
                 if a.release_unit == "iter" and a.release_every > 0 and self.iter % a.release_every == 0:
                     self.release()
         finally:
@@ -205,6 +214,21 @@ class Trainer:
             self.save(self.out / "last.pt")
             if self.releaser:
                 self.releaser.wait()
+
+    def _publish_pages(self):
+        """Snapshot the current policy, then record runs + push to GitHub Pages in the background."""
+        import copy
+        from .pages import record_episode
+        pol = copy.deepcopy(DeployPolicy(self.ac, self.norm)).eval()
+        cfg, level, it, n = self.cfg, self.cur.level, self.iter, self.args.pages_episodes
+
+        def act(obs):
+            with torch.no_grad():
+                return pol(torch.as_tensor(obs[None], dtype=torch.float32)).numpy()[0]
+
+        def make():
+            return [record_episode(act, cfg, level, seed=it * 100 + i, model_iter=it) for i in range(n)]
+        self.pages.publish_async(make, iteration=it)
 
     def _maybe_release_episode(self):
         a = self.args
@@ -329,6 +353,9 @@ def main():
     ap.add_argument("--repo", default=None, help="owner/repo (default: git origin)")
     ap.add_argument("--release-dry-run", action="store_true")
     ap.add_argument("--no-release", action="store_true")
+    ap.add_argument("--pages-every", type=int, default=0,
+                    help="publish the dashboard to GitHub Pages (gh-pages branch) every N iterations")
+    ap.add_argument("--pages-episodes", type=int, default=3, help="recorded runs per Pages update")
     ap.add_argument("--monitor", action="store_true", help="also start the live training dashboard")
     ap.add_argument("--monitor-port", type=int, default=8001)
     args = ap.parse_args()

@@ -92,7 +92,7 @@
         <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
         <span><i class="sw box" style="background:var(--red)"></i>Goal</span>
       </div>
-      <div style="margin-top:10px;font-size:12px;color:var(--muted)">Recent replay results (newest first)</div>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)" id="histlabel">Recent replay results (newest first)</div>
       <div class="hist" id="hist"></div>
     </div>
     <div style="display:grid;gap:12px;align-content:start">
@@ -310,31 +310,94 @@ function renderReplay(s) {
   }
 }
 
-// ----- polling
-let lastOk = 0;
+// ----- data sources: live API (local monitor) or static JSON (GitHub Pages)
+const STATIC = !!document.querySelector('meta[name="hs-static"]');
+let lastOk = 0, updatedAt = null;
+const getJSON = async u => (await fetch(u + (u.includes('?') ? '&' : '?') + 't=' + Date.now(), {cache: 'no-store'})).json();
+
 async function pollLog() {
   try {
-    const j = await (await fetch('/api/log?since=' + rows.length)).json();
-    if (j.start === rows.length && j.rows.length) { rows = rows.concat(j.rows); renderCharts(); renderTiles(); }
+    if (STATIC) {
+      const j = await getJSON('data/log.json');
+      if (j.updated !== updatedAt) {
+        updatedAt = j.updated; rows = j.rows; $('run').textContent = j.run || '';
+        renderCharts(); renderTiles();
+      }
+    } else {
+      const j = await getJSON('/api/log?since=' + rows.length);
+      if (j.start === rows.length && j.rows.length) { rows = rows.concat(j.rows); renderCharts(); renderTiles(); }
+    }
     lastOk = Date.now();
   } catch (e) {}
-  setTimeout(pollLog, 3000);
+  setTimeout(pollLog, STATIC ? 60000 : 3000);
 }
 async function pollReleases() {
-  try { releasesData = await (await fetch('/api/releases')).json(); renderReleases(); renderCharts(); } catch (e) {}
-  setTimeout(pollReleases, 15000);
+  try { releasesData = await getJSON(STATIC ? 'data/releases.json' : '/api/releases'); renderReleases(); renderCharts(); } catch (e) {}
+  setTimeout(pollReleases, STATIC ? 60000 : 15000);
 }
+
+// live: poll the monitor's replay thread
 async function pollReplay() {
-  try { renderReplay(await (await fetch('/api/replay')).json()); } catch (e) {}
+  try { renderReplay(await getJSON('/api/replay')); } catch (e) {}
   setTimeout(pollReplay, 150);
 }
+
+// static: play back the episodes recorded by the trainer, one after another
+let episodes = [], epIdx = 0, stepIdx = 0, epKey = null, wallSet = new Map();
+async function loadEpisodes() {
+  try {
+    const j = await getJSON('data/replays.json');
+    const key = j.updated;
+    if (key !== epKey) { epKey = key; episodes = j.episodes || []; epIdx = 0; stepIdx = 0; wallSet = new Map(); }
+  } catch (e) {}
+  setTimeout(loadEpisodes, 60000);
+}
+function playStep() {
+  const ep = episodes[epIdx];
+  if (!ep) { renderReplay({status: 'No recorded runs yet'}); return setTimeout(playStep, 1000); }
+  const n = ep.frames.length;
+  if (stepIdx === 0) wallSet = new Map();
+  for (const ev of ep.wall_events) if (ev[0] === stepIdx) {
+    const k = JSON.stringify([ev[2], ev[3]]); if (ev[1] > 0) wallSet.set(k, [ev[2], ev[3]]); else wallSet.delete(k);
+  }
+  const f = ep.frames[Math.min(stepIdx, n - 1)];
+  const done = stepIdx >= n - 1;
+  renderReplay({
+    status: done ? (ep.result.success ? 'GOAL' : 'failed') : 'driving',
+    model_iter: ep.model_iter, level: ep.level, bounds: ep.bounds, true_walls: ep.true_walls,
+    walls: [...wallSet.values()], start: ep.start, goal: ep.goal,
+    pose: f.p, est: f.e, rays: f.r, ray_angles: ep.ray_angles, cam_forward: ep.cam_forward,
+    path: f.c, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack,
+    time_s: ((stepIdx + 1) * ep.dt).toFixed(1), opt_cells: ep.opt_cells, collisions: f.k,
+    history: episodes.map(e => e.result),
+  });
+  if (done) { stepIdx = 0; epIdx = (epIdx + 1) % episodes.length; return setTimeout(playStep, 1500); }
+  stepIdx++;
+  setTimeout(playStep, ep.dt * 1000);
+}
+
 setInterval(() => {
-  const r = rows[rows.length - 1], fresh = Date.now() - lastOk < 10000;
-  $('livedot').className = 'dot' + (fresh ? '' : ' stale');
-  $('livetxt').textContent = fresh ? (r ? `live · iter ${r.iter.toLocaleString()}` : 'live · waiting for log') : 'disconnected';
+  const r = rows[rows.length - 1];
+  if (STATIC) {
+    const age = updatedAt ? (Date.now() / 1000 - updatedAt) / 60 : null;
+    $('livedot').className = 'dot' + (age !== null && age < 30 ? '' : ' stale');
+    $('livetxt').textContent = age === null ? 'loading…' :
+      `updated ${age < 1 ? 'just now' : Math.round(age) + ' min ago'}${r ? ' · iter ' + r.iter.toLocaleString() : ''}`;
+  } else {
+    const fresh = Date.now() - lastOk < 10000;
+    $('livedot').className = 'dot' + (fresh ? '' : ' stale');
+    $('livetxt').textContent = fresh ? (r ? `live · iter ${r.iter.toLocaleString()}` : 'live · waiting for log') : 'disconnected';
+  }
 }, 1000);
-fetch('/api/info').then(r => r.json()).then(j => { $('run').textContent = j.run; });
-pollLog(); pollReleases(); pollReplay(); renderTiles();
+if (STATIC) {
+  document.querySelector('.card h2').textContent = 'Replay — recorded runs of the latest model';
+  $('histlabel').textContent = 'Results of the recorded runs (played in order)';
+  loadEpisodes().then(playStep);
+} else {
+  fetch('/api/info').then(r => r.json()).then(j => { $('run').textContent = j.run; });
+  pollReplay();
+}
+pollLog(); pollReleases(); renderTiles();
 </script>
 </body>
 </html>
