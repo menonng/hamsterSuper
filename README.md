@@ -86,6 +86,15 @@ python -m hamster_super.rl.monitor --run runs/ppo --port 8001              # 또
 * **500 iteration마다** (`--release-every 500`):
   체크포인트 저장 → TorchScript/NumPy 내보내기 → 무작위 최고난도 맵 + `maps/` 예제맵 평가 →
   GitHub Release `model-iter000500`, `model-iter001000`, … 생성 (모델 파일·평가지표 첨부).
+* 릴리스 방법 (`--release-method auto`가 자동 선택):
+  1. `gh` CLI 로그인되어 있으면 → `gh release create`
+  2. `GITHUB_TOKEN` 환경변수가 있으면 → GitHub API
+  3. 둘 다 없으면 → **git push만으로**: 모델 파일을 담은 태그(`model-iter000500` …)를 푸시하고,
+     `.github/workflows/model-release.yml` 워크플로가 GitHub에서 릴리스를 만들어 파일을 첨부합니다.
+* 이미 저장된 릴리스 폴더를 나중에 올리기:
+  ```bash
+  python -m hamster_super.release.github_release releases/model-iter*
+  ```
 * 에피소드 단위로 원하면 `--release-unit episode`. 업로드 없이 확인만: `--release-dry-run`.
 * 이어서 학습: `--resume runs/ppo/last.pt`. 진행 로그: `runs/ppo/train_log.jsonl`.
 

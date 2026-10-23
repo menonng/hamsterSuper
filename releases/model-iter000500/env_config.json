@@ -1,0 +1,65 @@
+{
+  "dt": 0.1,
+  "substeps": 4,
+  "steps_per_cell": 40,
+  "known_map": false,
+  "r_progress": 0.1,
+  "r_goal": 10.0,
+  "r_collision": -0.5,
+  "r_time": -0.02,
+  "r_smooth": -0.02,
+  "r_out": -5.0,
+  "robot": {
+    "body_length": 4.0,
+    "body_width": 3.5,
+    "collision_radius": 2.3,
+    "track_width": 3.0,
+    "max_speed": 20.0,
+    "motor_tau": 0.06,
+    "ir_range": 6.0,
+    "ir_angle": 0.4363323129985824,
+    "ir_offset": 1.8
+  },
+  "camera": {
+    "width": 160,
+    "height": 120,
+    "hfov": 1.2217304763960306,
+    "mount_height": 5.0,
+    "mount_forward": 1.5,
+    "pitch": 0.5585053606381855,
+    "n_rays": 21,
+    "ray_fov": 1.117010721276371,
+    "max_range": 45.0
+  },
+  "dr": {
+    "enabled": true,
+    "wheel_gain": [
+      0.85,
+      1.15
+    ],
+    "max_speed": [
+      14.0,
+      26.0
+    ],
+    "motor_tau": [
+      0.02,
+      0.15
+    ],
+    "action_delay_steps": [
+      0,
+      2
+    ],
+    "track_width": [
+      2.7,
+      3.3
+    ],
+    "slip_std": 0.04,
+    "heading_drift_std": 0.01,
+    "ray_noise_std": 0.04,
+    "ray_dropout": 0.03,
+    "ray_spurious": 0.01,
+    "ir_noise_std": 0.05,
+    "pose_err_pos": 2.0,
+    "pose_err_yaw": 0.06981317007977318
+  }
+}

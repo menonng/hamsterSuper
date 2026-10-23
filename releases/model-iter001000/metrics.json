@@ -1,0 +1,25 @@
+{
+  "tag": "model-iter001000",
+  "iter": 1000,
+  "episodes": 13201,
+  "curriculum_level": 5,
+  "eval_random": {
+    "episodes": 60,
+    "level": 5,
+    "success_rate": 0.8333333333333334,
+    "mean_time_s": 16.372,
+    "mean_speed_cells_per_s": 1.108762040956945,
+    "collisions_per_episode": 20.366666666666667,
+    "full_stack": false
+  },
+  "eval_maps": {
+    "episodes": 30,
+    "level": "maps",
+    "success_rate": 0.9666666666666667,
+    "mean_time_s": 14.465517241379313,
+    "mean_speed_cells_per_s": 1.073811186579871,
+    "collisions_per_episode": 17.933333333333334,
+    "full_stack": false
+  },
+  "eval_seconds": 22.3
+}
