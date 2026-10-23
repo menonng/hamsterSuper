@@ -89,8 +89,9 @@ python -m hamster_super.rl.monitor --run runs/ppo --port 8001              # 또
 * 릴리스 방법 (`--release-method auto`가 자동 선택):
   1. `gh` CLI 로그인되어 있으면 → `gh release create`
   2. `GITHUB_TOKEN` 환경변수가 있으면 → GitHub API
-  3. 둘 다 없으면 → **git push만으로**: 모델 파일을 담은 태그(`model-iter000500` …)를 푸시하고,
-     `.github/workflows/model-release.yml` 워크플로가 GitHub에서 릴리스를 만들어 파일을 첨부합니다.
+  3. 둘 다 없으면 → **브랜치 푸시만으로**: 모델 파일을 `model-releases` 브랜치에 푸시하면
+     `.github/workflows/model-release.yml` 워크플로가 저장소 기본 토큰으로 릴리스를 만들고 파일을 첨부합니다.
+     토큰 설정 불필요, 태그 푸시 권한이 없는 환경(예: Claude 클라우드 세션)에서도 동작.
 * 이미 저장된 릴리스 폴더를 나중에 올리기:
   ```bash
   python -m hamster_super.release.github_release releases/model-iter*

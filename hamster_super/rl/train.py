@@ -341,8 +341,9 @@ def main():
     ap.add_argument("--release-unit", choices=["iter", "episode"], default="iter")
     ap.add_argument("--tag-prefix", default="model")
     ap.add_argument("--repo", default=None, help="owner/repo (default: git origin)")
-    ap.add_argument("--release-method", choices=["auto", "gh", "api", "actions"], default="auto",
-                    help="auto: gh CLI if logged in, else GITHUB_TOKEN, else tag push + GitHub Actions")
+    ap.add_argument("--release-method", choices=["auto", "gh", "api", "branch", "tag"], default="auto",
+                    help="auto: gh CLI if logged in, else GITHUB_TOKEN, else push to the model-releases "
+                         "branch and let GitHub Actions create the release")
     ap.add_argument("--release-dry-run", action="store_true")
     ap.add_argument("--no-release", action="store_true")
     ap.add_argument("--pages-every", type=int, default=0,

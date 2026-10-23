@@ -3,9 +3,12 @@
 Methods (``method="auto"`` picks the first that is available):
   * ``gh``      - the `gh` CLI, when installed and authenticated
   * ``api``     - the GitHub REST API with $GITHUB_TOKEN (or $GH_TOKEN)
-  * ``actions`` - needs only `git push`: a commit with the model files under
-                  release/ is tagged and the tag pushed; the workflow
-                  .github/workflows/model-release.yml then creates the release.
+  * ``branch``  - needs only permission to push a branch: the model files are
+                  force-pushed as a single commit to the `model-releases`
+                  branch and the workflow .github/workflows/model-release.yml
+                  creates the release with the repository's built-in token.
+                  Works even where tag pushes are not allowed.
+  * ``tag``     - like ``branch`` but pushes a tag that carries the files.
 The target repository is read from `git remote get-url origin` unless given.
 """
 from __future__ import annotations
@@ -89,21 +92,23 @@ class GitHubReleaser:
             return None
         method = self.method
         if method == "auto":
-            method = "gh" if shutil.which("gh") and self._gh_ok() else ("api" if self.token else "actions")
+            method = "gh" if shutil.which("gh") and self._gh_ok() else ("api" if self.token else "branch")
         if method == "gh":
             url = self._publish_gh(tag, title, notes, files)
         elif method == "api":
             if not self.token:
                 raise RuntimeError("method 'api' needs GITHUB_TOKEN")
             url = self._publish_rest(tag, title, notes, files)
+        elif method == "tag":
+            url = self._publish_tag(tag, title, notes, files)
         else:
-            url = self._publish_actions(tag, title, notes, files)
+            url = self.publish_branch([(tag, title, notes, files)])[0]
         msg = f"[release] published {tag} -> {url}"
         print(msg, flush=True)
         self.log.append(msg)
         return url
 
-    def _publish_actions(self, tag, title, notes, files):
+    def _publish_tag(self, tag, title, notes, files):
         """Commit HEAD's tree + release/<files> + .release-notes.md (parent HEAD),
         tag it and push only the tag. Uses a temporary index, so the working
         tree and branches are untouched."""
@@ -134,6 +139,52 @@ class GitHubReleaser:
             for p in (Path(env["GIT_INDEX_FILE"]), Path(env["GIT_INDEX_FILE"] + ".md")):
                 p.unlink(missing_ok=True)
         return f"https://github.com/{self.repo}/releases/tag/{tag} (created by the 'Model release' workflow)"
+
+    def publish_branch(self, items, branch: str = "model-releases") -> list:
+        """items: [(tag, title, notes, files)]. Force-pushes one orphan commit
+        with the workflow, releases/<tag>/<files> and releases/<tag>.md to
+        `branch`; the workflow releases every tag that does not exist yet."""
+        if self.dry_run:
+            return [None for _ in items]
+        root = Path(_git("rev-parse", "--show-toplevel", cwd=self.cwd))
+        gitdir = Path(_git("rev-parse", "--git-dir", cwd=self.cwd))
+        if not gitdir.is_absolute():
+            gitdir = (Path(self.cwd or ".") / gitdir).resolve()
+        env = {**os.environ, "GIT_INDEX_FILE": str(gitdir / "index-model-releases")}
+        tmp_notes = []
+
+        def g(*args):
+            return subprocess.run(["git", *args], cwd=self.cwd, env=env, check=True, capture_output=True,
+                                  text=True).stdout
+
+        def add(src, dst):
+            sha = g("hash-object", "-w", str(src)).strip()
+            g("update-index", "--add", "--cacheinfo", f"100644,{sha},{dst}")
+
+        try:
+            Path(env["GIT_INDEX_FILE"]).unlink(missing_ok=True)
+            add(root / ".github" / "workflows" / "model-release.yml", ".github/workflows/model-release.yml")
+            for tag, title, notes, files in items:
+                for f in files:
+                    if Path(f).exists():
+                        add(f, f"releases/{tag}/{Path(f).name}")
+                nf = Path(env["GIT_INDEX_FILE"] + f"-{tag}.md")
+                nf.write_text(f"{title}\n{notes}", encoding="utf-8")
+                tmp_notes.append(nf)
+                add(nf, f"releases/{tag}.md")
+            tree = g("write-tree").strip()
+            tags = ", ".join(t for t, *_ in items)
+            commit = g("commit-tree", tree, "-m", f"Model release: {tags}").strip()
+            res = subprocess.run(["git", "push", "-f", self.remote, f"{commit}:refs/heads/{branch}"],
+                                 cwd=self.cwd, capture_output=True, text=True)
+            if res.returncode != 0:
+                raise RuntimeError(res.stderr.strip() or res.stdout.strip())
+        finally:
+            Path(env["GIT_INDEX_FILE"]).unlink(missing_ok=True)
+            for nf in tmp_notes:
+                nf.unlink(missing_ok=True)
+        return [f"https://github.com/{self.repo}/releases/tag/{t} (created by the 'Model release' workflow)"
+                for t, *_ in items]
 
     def _gh_ok(self) -> bool:
         return subprocess.run(["gh", "auth", "status"], capture_output=True).returncode == 0
@@ -194,16 +245,26 @@ def main():
     import argparse
     ap = argparse.ArgumentParser(description="Publish saved model releases to GitHub")
     ap.add_argument("dirs", nargs="+", help="release folders containing metrics.json")
-    ap.add_argument("--method", choices=["auto", "gh", "api", "actions"], default="auto")
+    ap.add_argument("--method", choices=["auto", "gh", "api", "branch", "tag"], default="auto")
     ap.add_argument("--repo", default=None)
     args = ap.parse_args()
     rel = GitHubReleaser(repo=args.repo, method=args.method)
+    items = []
     for d in map(Path, args.dirs):
         m = json.loads((d / "metrics.json").read_text())
         tag = m.get("tag", d.name)
         files = [d / n for n in ("policy_ts.pt", "policy.npz", "checkpoint.pt", "metrics.json", "env_config.json")]
-        rel.publish(tag, f"HamsterSuper {tag}", release_notes(m), files, background=False)
-
+        items.append((tag, f"HamsterSuper {tag}", release_notes(m), files))
+    method = rel.method
+    if method == "auto":
+        method = "gh" if shutil.which("gh") and rel._gh_ok() else ("api" if rel.token else "branch")
+    if method == "branch":   # one push for all of them
+        for url in rel.publish_branch(items):
+            print(f"[release] queued -> {url}")
+    else:
+        rel.method = method
+        for it in items:
+            rel.publish(*it, background=False)
 
 if __name__ == "__main__":
     main()
