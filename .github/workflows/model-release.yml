@@ -1,0 +1,56 @@
+# Creates GitHub Releases for trained models, using the repository's
+# built-in token, so the training machine only needs `git push`.
+#
+# * push to the `model-releases` branch (default): the trainer
+#   (hamster_super/release/github_release.py, method "branch") force-pushes a
+#   commit with releases/<tag>/<files> and releases/<tag>.md (first line =
+#   title, rest = notes). Every tag that has no release yet is released,
+#   tagged on the repository's default branch.
+# * push of a `model-*` tag (method "tag"): files in release/, notes in
+#   .release-notes.md.
+name: Model release
+
+on:
+  push:
+    branches: [model-releases]
+    tags: ["model-*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create GitHub releases
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TARGET: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag="${GITHUB_REF_NAME}"
+            [ -f .release-notes.md ] || echo "HamsterSuper model ${tag}" > .release-notes.md
+            if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+              gh release upload "$tag" release/* --clobber --repo "$REPO"
+            else
+              gh release create "$tag" release/* --title "HamsterSuper ${tag}" \
+                --notes-file .release-notes.md --repo "$REPO"
+            fi
+            exit 0
+          fi
+          shopt -s nullglob
+          for notes in releases/*.md; do
+            tag="$(basename "$notes" .md)"
+            if gh release view "$tag" --repo "$REPO" >/dev/null 2>&1; then
+              echo "release $tag already exists, skipping"
+              continue
+            fi
+            title="$(head -n 1 "$notes")"
+            tail -n +2 "$notes" > /tmp/notes.md
+            gh release create "$tag" releases/"$tag"/* --target "$TARGET" \
+              --title "$title" --notes-file /tmp/notes.md --repo "$REPO"
+            echo "released $tag"
+          done
