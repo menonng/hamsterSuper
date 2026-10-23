@@ -80,6 +80,7 @@ class RayLUT:
         step = self.r[1] - self.r[0]
         run = max(1, int(round(min_run_cm / step)))
         samples = wall_mask[self.v, self.u] & self.valid           # (K, N)
+        raw = samples
         out = np.full(len(self.angles), self.spec.max_range)
         if run > 1:
             # run-length filter: position i is a wall start if the next `run` samples are wall
@@ -89,7 +90,14 @@ class RayLUT:
             end = np.minimum(idx + run, n)
             full = (c[:, end] - c[:, idx]) >= (end - idx)
             samples = samples & full
+        first = np.argmax(self.valid, axis=1)
         for k in range(len(self.angles)):
+            f = first[k]
+            if raw[k, f] and raw[k, min(f + 1, raw.shape[1] - 1)]:
+                # wall touching the bottom edge of the image: a wall closer than the
+                # visible floor shows up as a short strip, keep it despite the run filter
+                out[k] = self.r_min[k]
+                continue
             hits = np.flatnonzero(samples[k])
             if hits.size:
                 out[k] = max(self.r[hits[0]], self.r_min[k])
@@ -97,12 +105,13 @@ class RayLUT:
 
 
 # ----------------------------------------------------------------- renderer
-FLOOR = np.array([214, 210, 200], np.uint8)
-FLOOR_FAR = np.array([170, 168, 160], np.uint8)
-WALL_FACE = np.array([60, 62, 75], np.uint8)
-WALL_TOP = np.array([72, 74, 88], np.uint8)
-DOT = np.array([30, 30, 30], np.uint8)
-SKY = np.array([120, 120, 125], np.uint8)
+# The race course: black floor, white walls. The dot colour is not known yet.
+FLOOR = np.array([22, 22, 25], np.uint8)
+FLOOR_FAR = np.array([38, 38, 42], np.uint8)
+WALL_FACE = np.array([228, 228, 224], np.uint8)
+WALL_TOP = np.array([244, 244, 240], np.uint8)
+DOT = np.array([150, 150, 150], np.uint8)
+SKY = np.array([90, 90, 95], np.uint8)
 
 
 class Renderer:
@@ -151,15 +160,26 @@ class Renderer:
             todo = todo[over]
             if todo.size == 0:
                 break
-        sub = np.empty((dd.shape[0], 3), np.uint8)
+        sub = np.empty((dd.shape[0], 3), np.float32)
         gp = cam_xy + hdir * s_ground[:, None]
         g = gp / GRID_SPACING
         dot = np.hypot(g[:, 0] - np.round(g[:, 0]), g[:, 1] - np.round(g[:, 1])) * GRID_SPACING < self.dot_radius
         fade = np.clip(s_ground / 150.0, 0, 1)[:, None]
-        sub[:] = (FLOOR * (1 - fade) + FLOOR_FAR * fade).astype(np.uint8)
-        sub[dot] = DOT
-        sub[is_top] = WALL_TOP
-        sub[is_face] = WALL_FACE
+        floor, face, top, dotc = FLOOR.astype(np.float32), WALL_FACE.astype(np.float32), \
+            WALL_TOP.astype(np.float32), DOT.astype(np.float32)
+        if rng is not None:   # lighting / material variation: shaded walls, glossy floor, unknown dot colour
+            face = face * rng.uniform(0.7, 1.0)
+            floor = floor + rng.uniform(-10, 25)
+            dotc = np.full(3, rng.uniform(40, 235), np.float32)
+        sub[:] = floor * (1 - fade) + FLOOR_FAR * fade
+        if rng is not None:   # a soft glare patch on the black floor
+            cx_, cy_ = rng.uniform(-20, 20, 2)
+            glare = rng.uniform(0, 45) * np.exp(-((gp[:, 0] - cam_xy[0] - cx_) ** 2 + (gp[:, 1] - cam_xy[1] - cy_) ** 2) / 300)
+            sub += glare[:, None]
+        sub[dot] = dotc
+        sub[is_top] = top
+        sub[is_face] = face
+        sub = np.clip(sub, 0, 255).astype(np.uint8)
         img[down] = sub
         img = img.reshape(spec.height, spec.width, 3)
         if rng is not None:  # sensor noise + exposure jitter
@@ -169,8 +189,25 @@ class Renderer:
         return img
 
 
+def wall_mask_bright(img_rgb: np.ndarray, threshold: int | None = 128) -> np.ndarray:
+    """White walls on a black floor. threshold=None picks it per frame (Otsu)."""
+    gray = img_rgb.astype(np.float32).mean(axis=-1)
+    if threshold is None:   # per-frame threshold, kept in a sane band for wall-free frames
+        threshold = float(np.clip(otsu_threshold(gray), 70, 200))
+    return gray > threshold
+
+
 def wall_mask_dark(img_rgb: np.ndarray, threshold: int = 110) -> np.ndarray:
-    """Simple wall segmentation: walls are darker than the floor.
-    Replace/tune once real photos of the course are available."""
+    """For courses with walls darker than the floor."""
     gray = img_rgb.astype(np.float32).mean(axis=-1)
     return gray < threshold
+
+
+def otsu_threshold(gray: np.ndarray) -> float:
+    hist = np.bincount(np.clip(gray, 0, 255).astype(np.int32).ravel(), minlength=256).astype(np.float64)
+    p = hist / max(hist.sum(), 1)
+    omega = np.cumsum(p)
+    mu = np.cumsum(p * np.arange(256))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        between = (mu[-1] * omega - mu) ** 2 / (omega * (1 - omega))
+    return float(np.nanargmax(between))

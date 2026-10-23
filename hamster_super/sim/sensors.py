@@ -17,6 +17,24 @@ class DepthRays:
         self.angles = spec.ray_angles()
         self.r_min = self.lut.r_min
         self.see_over = self.r_min * (1 - WALL_HEIGHT / spec.mount_height)
+        self.pitch_err = 0.0     # actual tilt - configured tilt (rad)
+        self.height_err = 0.0    # actual lens height - configured height (cm)
+
+    def set_mount_error(self, pitch_err: float, height_err: float):
+        """The camera tilt is set by hand once; perception then converts image
+        rows to distance with the configured tilt/height, so any setup error
+        bends every measured distance in the same way for the whole run."""
+        self.pitch_err, self.height_err = float(pitch_err), float(height_err)
+
+    def _mount_distortion(self, r: np.ndarray) -> np.ndarray:
+        if self.pitch_err == 0.0 and self.height_err == 0.0:
+            return r
+        h = self.spec.mount_height
+        depression = np.arctan2(h + self.height_err, r)        # true angle below horizontal
+        seen = depression - self.pitch_err                      # what the configured model assumes
+        with np.errstate(divide="ignore"):
+            out = np.where(seen > 1e-3, h / np.tan(np.maximum(seen, 1e-3)), self.spec.max_range)
+        return np.where(r >= self.spec.max_range, r, out)
 
     def origin(self, pose) -> np.ndarray:
         x, y, th = pose
@@ -31,7 +49,9 @@ class DepthRays:
         dirs = np.stack([np.cos(th), np.sin(th)], axis=1)
         o = self.origin(pose)
         d, ex = raycast(o, dirs, boxes, self.spec.max_range, return_exit=True)
-        over = d < self.see_over
+        # the camera only looks over a wall if even its top surface (0.5 cm deep)
+        # is below the line of sight to the first visible floor point
+        over = ex < self.see_over
         if over.any():
             o2 = o + dirs[over] * (ex[over, None] + 0.01)
             d[over] = np.minimum(raycast(o2, dirs[over], boxes, self.spec.max_range) + ex[over] + 0.01,
@@ -39,7 +59,7 @@ class DepthRays:
         return d
 
     def measure(self, pose, boxes, dr: DomainRandomization, rng: np.random.Generator) -> np.ndarray:
-        r = self.true_ranges(pose, boxes)
+        r = self._mount_distortion(self.true_ranges(pose, boxes))
         if dr.enabled:
             r = r * (1 + rng.normal(0, dr.ray_noise_std, r.shape))
             drop = rng.random(r.shape) < dr.ray_dropout

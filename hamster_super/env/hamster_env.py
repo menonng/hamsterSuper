@@ -63,6 +63,11 @@ class HamsterMazeEnv(gym.Env):
         pos = cell_center(m.start) + (self.rng.uniform(-1, 1, 2) if jitter else 0)
         heading = heading + (self.rng.uniform(-0.25, 0.25) if jitter else 0)
         self.robot.reset((pos[0], pos[1], wrap(heading)))
+        if self.cfg.dr.enabled:
+            self.rays.set_mount_error(self.rng.uniform(-1, 1) * self.cfg.dr.cam_pitch_err,
+                                      self.rng.uniform(-1, 1) * self.cfg.dr.cam_height_err)
+        else:
+            self.rays.set_mount_error(0.0, 0.0)
         path = m.shortest_path()
         self.opt_cells = len(path) - 1 if path else 0
         self.max_steps = self.cfg.steps_per_cell * max(1, self.opt_cells) + 100

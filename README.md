@@ -109,19 +109,23 @@ python -m hamster_super.rl.evaluate --model models/policy.npz --maps maps/ --ful
 
 ## 실제 로봇 실행 (Python 서버)
 
-1. 햄스터 위에 카메라 장착 (기본값: 바닥에서 렌즈 5 cm, 중심에서 앞으로 1.5 cm, 아래로 32° 기울임, 수평화각 70°).
+1. 카메라 장착: 햄스터와 같은 크기의 카메라 모듈을 **높이 1.5 cm 부착물**로 햄스터 위에 연결, 진행 방향을 향하게.
+   기본값: 렌즈 높이 6.0 cm(햄스터 3.0 + 부착물 1.5 + 모듈 절반 1.5), 중심에서 앞으로 2.0 cm, 수평화각 70°,
+   아래로 35° 기울임(각도는 자유지만 한 번 맞추면 고정 → 아래 `pitch` 보정으로 실제 각도를 측정).
+   코스: **바닥 검정, 벽 하양** → 벽 인식은 밝기 기준(프레임마다 자동 임계값, `otsu`).
    USB 웹캠 또는 ESP32-CAM 같은 Wi-Fi 스트림 모두 가능 (`--camera 0` 또는 `--camera http://IP:81/stream`).
 2. 보정:
    ```bash
    python -m hamster_super.robot.calibrate speed     # 직진 속도 (추측항법 정확도에 중요!)
    python -m hamster_super.robot.calibrate turn      # 바퀴 간격
+   python -m hamster_super.robot.calibrate pitch --distance 10   # 벽을 렌즈 앞 10 cm에 두고 카메라 기울기 측정
    python -m hamster_super.robot.calibrate camera    # 벽 인식 확인 (calib_mask.png)
    ```
    `calib.json` 예시:
    ```json
    {"robot": {"max_speed": 18.5, "track_width": 3.1},
-    "camera": {"mount_height": 5.0, "pitch_deg": 32, "hfov_deg": 70},
-    "segmentation": {"method": "dark", "dark_threshold": 110}}
+    "camera": {"mount_height": 6.0, "pitch_deg": 35.4, "hfov_deg": 70},
+    "segmentation": {"method": "otsu"}}
    ```
 3. 서버 실행 후 브라우저에서 `http://localhost:8000` (실시간 지도·경로·카메라·바퀴 상태, 시작/정지 버튼):
    ```bash

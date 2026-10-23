@@ -98,8 +98,8 @@
       <div id="view3d"><span class="hint" id="hint3d"></span></div>
       <canvas id="maze" width="760" height="560"></canvas>
       <div class="legend">
-        <span><i class="sw" style="background:var(--truewall);opacity:.5"></i>Actual walls</span>
-        <span><i class="sw" style="background:var(--blue)"></i>Walls the robot found</span>
+        <span><i class="sw" id="swTrue" style="background:var(--truewall);opacity:.5"></i><span id="lgTrue">Actual walls</span></span>
+        <span><i class="sw" style="background:var(--blue)"></i><span id="lgFound">Walls the robot found</span></span>
         <span><i class="sw" style="background:var(--green)"></i>Planned path</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
         <span><i class="sw" style="background:var(--orange)"></i>Estimated pose</span>
@@ -382,7 +382,7 @@ function playStep() {
     model_iter: ep.model_iter, level: ep.level, bounds: ep.bounds, true_walls: ep.true_walls,
     walls: [...wallSet.values()], start: ep.start, goal: ep.goal,
     pose: f.p, est: f.e, rays: f.r, ray_angles: ep.ray_angles, cam_forward: ep.cam_forward,
-    path: f.c, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack,
+    path: f.c, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack, cam: ep.cam,
     time_s: ((stepIdx + 1) * ep.dt).toFixed(1), opt_cells: ep.opt_cells, collisions: f.k,
     history: episodes.map(e => e.result),
   });
@@ -425,6 +425,10 @@ function applyView() {
   document.querySelectorAll('#dimSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (is3d ? '3d' : '2d')));
   document.querySelectorAll('#camSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === viewState.cam));
   if (window.HS3D) { window.HS3D.setVisible(is3d); window.HS3D.setCam(viewState.cam); }
+  // the 3D view shows the real course colours: white walls on a black floor
+  $('swTrue').style.cssText = is3d ? 'background:#F4F4F0;outline:1px solid var(--muted)' : 'background:var(--truewall);opacity:.5';
+  $('lgTrue').textContent = is3d ? 'Walls (white, real colours)' : 'Actual walls';
+  $('lgFound').textContent = is3d ? 'Walls the robot found (blue top)' : 'Walls the robot found';
   try { localStorage.setItem('hs-view', JSON.stringify(viewState)); } catch (e) {}
 }
 document.querySelectorAll('#dimSeg button').forEach(b => b.onclick = () => { viewState.dim = b.dataset.v; applyView(); });
@@ -479,28 +483,35 @@ function init() {
   let foundMesh = null, foundKey = '';
   const MAXW = 600;
 
-  // --- robot: Hamster-sized body (4 x 3.5 cm), wheels, camera mast
-  function makeRobot(bodyColor, ghost) {
-    const g = new THREE.Group();
-    const bodyGeo = new THREE.BoxGeometry(4.0, 3.0, 3.5);
-    if (ghost) {
-      const e = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), new THREE.LineBasicMaterial({color: bodyColor}));
-      e.position.y = 2.0; g.add(e);
+  // --- robot: Hamster + 1.5 cm attachment + camera module of the same size on top
+  let geom = {h: 6.0, fwd: 2.0, pitch_deg: 35, hfov_deg: 70, attach: 1.5, module_h: 3.0, body_h: 3.0, body_l: 4.0, body_w: 3.5};
+  function makeRobot(bodyColor, isGhost) {
+    const g = new THREE.Group(), k = geom;
+    const bodyGeo = new THREE.BoxGeometry(k.body_l, k.body_h - 0.3, k.body_w);
+    const camGeo = new THREE.BoxGeometry(k.body_l, k.module_h, k.body_w);
+    const camY = k.body_h + k.attach + k.module_h / 2;
+    if (isGhost) {
+      const mat = new THREE.LineBasicMaterial({color: bodyColor});
+      const e = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), mat); e.position.y = 0.3 + (k.body_h - 0.3) / 2;
+      const c = new THREE.LineSegments(new THREE.EdgesGeometry(camGeo), mat); c.position.y = camY;
+      g.add(e, c);
       return g;
     }
     const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({color: bodyColor, roughness: .5}));
-    body.position.y = 2.0; body.castShadow = true; g.add(body);
-    const face = new THREE.Mesh(new THREE.BoxGeometry(0.2, 1.2, 2.6), new THREE.MeshStandardMaterial({color: 0x222838}));
-    face.position.set(2.05, 2.2, 0); g.add(face);
+    body.position.y = 0.3 + (k.body_h - 0.3) / 2; body.castShadow = true; g.add(body);
+    const dark = new THREE.MeshStandardMaterial({color: 0x2a2f3c, roughness: .9});
     const wheelGeo = new THREE.CylinderGeometry(0.9, 0.9, 0.5, 20);
-    const wheelMat = new THREE.MeshStandardMaterial({color: 0x2a2f3c, roughness: .9});
-    for (const z of [-1.9, 1.9]) {
-      const w = new THREE.Mesh(wheelGeo, wheelMat); w.rotation.x = Math.PI / 2; w.position.set(0, 0.9, z); w.castShadow = true; g.add(w);
+    for (const z of [-(k.body_w / 2 + 0.2), k.body_w / 2 + 0.2]) {
+      const w = new THREE.Mesh(wheelGeo, dark); w.rotation.x = Math.PI / 2; w.position.set(0, 0.9, z); w.castShadow = true; g.add(w);
     }
-    const mast = new THREE.Mesh(new THREE.BoxGeometry(0.4, 1.6, 0.4), wheelMat);
-    mast.position.set(1.5, 4.3, 0); g.add(mast);
-    const lens = new THREE.Mesh(new THREE.BoxGeometry(0.8, 0.7, 1.2), new THREE.MeshStandardMaterial({color: 0x111522}));
-    lens.position.set(1.5, 5.0, 0); lens.rotation.z = -0.56; g.add(lens);
+    const attach = new THREE.Mesh(new THREE.BoxGeometry(k.body_l * .6, k.attach, k.body_w * .6), dark);
+    attach.position.y = k.body_h + k.attach / 2; g.add(attach);
+    const camBox = new THREE.Mesh(camGeo, new THREE.MeshStandardMaterial({color: 0x3a4152, roughness: .6}));
+    camBox.position.y = camY; camBox.castShadow = true; g.add(camBox);
+    // lens on the front face, tilted down by the configured pitch
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.5, 20), new THREE.MeshStandardMaterial({color: 0x0b0d14}));
+    lens.rotation.z = Math.PI / 2 - k.pitch_deg * Math.PI / 180;
+    lens.position.set(k.body_l / 2 + 0.2, camY, 0); g.add(lens);
     return g;
   }
   let robot, ghost;
@@ -535,27 +546,29 @@ function init() {
     const W = (x1 - x0 + 1) * G, H = (y1 - y0 + 1) * G;
     center = V((x0 * G + (x1 + 1) * G) / 2, (y0 * G + (y1 + 1) * G) / 2);
     span = Math.max(W, H);
+    // the real course: black floor, white walls (dot colour not known yet: grey)
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(W + 2 * G, H + 2 * G),
-      new THREE.MeshStandardMaterial({color: col('--floor3d'), roughness: 1}));
+      new THREE.MeshStandardMaterial({color: 0x121316, roughness: .55, metalness: .1}));
     floor.rotation.x = -Math.PI / 2; floor.position.copy(center); floor.receiveShadow = true;
     mapGroup.add(floor);
     // floor dots every 9 cm
     const nd = (x1 - x0 + 2) * (y1 - y0 + 2);
-    const dots = new THREE.InstancedMesh(new THREE.CircleGeometry(0.4, 12), new THREE.MeshBasicMaterial({color: col('--dot3d')}), nd);
+    const dots = new THREE.InstancedMesh(new THREE.CircleGeometry(0.4, 12), new THREE.MeshBasicMaterial({color: 0x8a8f9c}), nd);
     const m = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
     let k = 0;
     for (let i = x0; i <= x1 + 1; i++) for (let j = y0; j <= y1 + 1; j++) {
       m.compose(V(i * G, j * G, 0.02), q, new THREE.Vector3(1, 1, 1)); dots.setMatrixAt(k++, m);
     }
     mapGroup.add(dots);
-    // actual walls: translucent; the walls the robot has found are drawn solid on top
+    // actual walls in their real colour; walls the robot has found get a blue cap on top
     const walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
-      new THREE.MeshStandardMaterial({color: col('--truewall'), transparent: true, opacity: .35, depthWrite: false}), s.true_walls.length);
+      new THREE.MeshStandardMaterial({color: 0xf4f4f0, roughness: .8}), s.true_walls.length);
+    walls.castShadow = true; walls.receiveShadow = true;
     s.true_walls.forEach((w, i) => walls.setMatrixAt(i, wallMatrix(w, 1)));
     mapGroup.add(walls);
     foundMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
       new THREE.MeshStandardMaterial({color: col('--blue'), roughness: .6}), MAXW);
-    foundMesh.castShadow = true; foundMesh.receiveShadow = true; foundMesh.count = 0;
+    foundMesh.count = 0;
     mapGroup.add(foundMesh); foundKey = '';
     const pad = (c, color, h, op) => {
       const b = new THREE.Mesh(new THREE.BoxGeometry(G - 1, h, G - 1),
@@ -574,10 +587,11 @@ function init() {
     cam.position.copy(center).add(new THREE.Vector3(0, span * .9, span * .75));
     smooth = null;
   }
-  function wallMatrix([a, b], grow) {
+  function wallMatrix([a, b], grow, cap) {
     const horiz = a[1] === b[1];
-    const pos = V((a[0] + b[0]) / 2 * G, (a[1] + b[1]) / 2 * G, WALL_H / 2);
-    const scale = horiz ? new THREE.Vector3(G * grow, WALL_H, WALL_T * grow) : new THREE.Vector3(WALL_T * grow, WALL_H, G * grow);
+    const h = cap ? 0.3 : WALL_H, y = cap ? WALL_H + 0.15 : WALL_H / 2;
+    const pos = V((a[0] + b[0]) / 2 * G, (a[1] + b[1]) / 2 * G, y);
+    const scale = horiz ? new THREE.Vector3(G * grow, h, WALL_T * grow) : new THREE.Vector3(WALL_T * grow, h, G * grow);
     return new THREE.Matrix4().compose(pos, new THREE.Quaternion(), scale);
   }
 
@@ -586,12 +600,16 @@ function init() {
   const angLerp = (a, b, t) => a + (((b - a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
   function update(s) {
     if (!s || !s.bounds) return;
+    if (s.cam) {   // rebuild the robot model only when the geometry actually changes
+      const merged = {...geom, ...s.cam};
+      if (JSON.stringify(merged) !== JSON.stringify(geom)) { geom = merged; buildTheme(); setCam(camMode); }
+    }
     const key = JSON.stringify([s.bounds, s.start, s.goal, s.true_walls.length]);
     if (key !== mapKey) { mapKey = key; buildMap(s); }
     const fk = s.walls.length + ':' + JSON.stringify(s.walls[s.walls.length - 1] || '');
     if (fk !== foundKey) {
       foundKey = fk; foundMesh.count = Math.min(s.walls.length, MAXW);
-      s.walls.slice(0, MAXW).forEach((w, i) => foundMesh.setMatrixAt(i, wallMatrix(w, 1.04)));
+      s.walls.slice(0, MAXW).forEach((w, i) => foundMesh.setMatrixAt(i, wallMatrix(w, 1.06, true)));
       foundMesh.instanceMatrix.needsUpdate = true;
     }
     target = s.pose; est = s.full_stack ? s.est : null;
@@ -610,7 +628,7 @@ function init() {
     const tp = trailGeo.attributes.position.array; const tr = (s.trail || []).slice(-5000); k = 0;
     tr.forEach(q => { tp.set([q[0], 0.1, -q[1]], k); k += 3; });
     trailGeo.setDrawRange(0, tr.length); trailGeo.attributes.position.needsUpdate = true;
-    ghost.visible = !!est;
+    ghost.visible = !!est && camMode !== 'robot';
     if (est) { ghost.position.copy(V(est[0], est[1])); ghost.rotation.y = est[2]; }
   }
 
@@ -618,8 +636,9 @@ function init() {
   function setCam(m) {
     camMode = m; controls.enabled = m === 'orbit';
     hint.textContent = m === 'orbit' ? 'Drag to rotate · scroll to zoom · right-drag to pan'
-      : m === 'robot' ? 'Robot camera view: 5 cm high, tilted 32° down, 70° horizontal field of view' : '';
+      : m === 'robot' ? `Robot camera view: lens ${geom.h} cm high, tilted ${geom.pitch_deg}° down, ${geom.hfov_deg}° horizontal field of view` : '';
     robot && (robot.visible = m !== 'robot');
+    ghost && est && (ghost.visible = m !== 'robot');
   }
   function resize() {
     const w = box.clientWidth, h = box.clientHeight;
@@ -636,15 +655,15 @@ function init() {
     const [x, y, th] = smooth, fwd = new THREE.Vector3(Math.cos(th), 0, -Math.sin(th));
     robot.position.copy(V(x, y)); robot.rotation.y = th;
     if (camMode === 'chase') {
-      cam.fov = 55; cam.position.copy(V(x, y, 0)).addScaledVector(fwd, -24).add(new THREE.Vector3(0, 20, 0));
+      cam.fov = 55; cam.position.copy(V(x, y, 0)).addScaledVector(fwd, -24).add(new THREE.Vector3(0, 22, 0));
       cam.lookAt(V(x, y, 0).addScaledVector(fwd, 10));
     } else if (camMode === 'robot') {
-      // same geometry as CameraSpec: 1.5 cm forward, 5 cm high, pitched 32 deg down, 70 deg HFOV
-      const hfov = 70 * Math.PI / 180;
+      // same geometry as the training CameraSpec (lens height, forward offset, tilt, HFOV)
+      const hfov = geom.hfov_deg * Math.PI / 180;
       cam.fov = 2 * Math.atan(Math.tan(hfov / 2) / cam.aspect) * 180 / Math.PI;
-      const p = V(x, y, 5.0).addScaledVector(fwd, 1.5);
+      const p = V(x, y, geom.h).addScaledVector(fwd, geom.fwd + 0.05);
       cam.position.copy(p);
-      const pitch = 32 * Math.PI / 180;
+      const pitch = geom.pitch_deg * Math.PI / 180;
       cam.lookAt(p.clone().addScaledVector(fwd, Math.cos(pitch)).add(new THREE.Vector3(0, -Math.sin(pitch), 0)));
     } else {
       cam.fov = 50; controls.update();

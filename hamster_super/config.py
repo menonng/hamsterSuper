@@ -25,6 +25,7 @@ class RobotSpec:
     """Robomation Hamster (approximate)."""
     body_length: float = 4.0         # cm (front-back)
     body_width: float = 3.5          # cm
+    body_height: float = 3.0         # cm (approximate; measure the real robot)
     collision_radius: float = 2.3    # cm, circular collision approximation
     track_width: float = 3.0         # cm, distance between the left and right wheels
     max_speed: float = 20.0          # cm/s at wheel command 100 (calibrate)
@@ -36,13 +37,21 @@ class RobotSpec:
 
 @dataclass
 class CameraSpec:
-    """Camera mounted on the robot (to be added on the real robot)."""
+    """Camera on the robot.
+
+    Physical setup: a camera module the same size as the Hamster sits on top
+    of it on a 1.5 cm attachment, facing the direction of travel. Its tilt can
+    be set freely but stays fixed once set, so `pitch` is a calibration value.
+    Lens height = body height (3.0) + attachment (1.5) + half the module (1.5).
+    """
     width: int = 160                 # processing resolution
     height: int = 120
     hfov: float = math.radians(70)   # horizontal field of view
-    mount_height: float = 5.0        # cm, lens height above the floor
-    mount_forward: float = 1.5       # cm, forward offset from the robot center
-    pitch: float = math.radians(32)  # downward tilt angle (steeper = smaller blind zone)
+    attach_height: float = 1.5       # cm, attachment between the Hamster and the camera module
+    module_height: float = 3.0       # cm, camera module (same size as the Hamster)
+    mount_height: float = 6.0        # cm, lens height above the floor
+    mount_forward: float = 2.0       # cm, lens forward of the robot center (front face of the module)
+    pitch: float = math.radians(35)  # downward tilt, set once by hand and then fixed
     n_rays: int = 21                 # number of depth rays the policy sees
     ray_fov: float = math.radians(64)  # angular range covered by the rays (<= hfov)
     max_range: float = 45.0          # cm
@@ -74,6 +83,8 @@ class DomainRandomization:
     pose_err_pos: float = 2.0              # cm, max localization error shown to the planner
     pose_err_yaw: float = math.radians(4)
     calib_error: float = 0.07              # residual error of the speed/track calibration
+    cam_pitch_err: float = math.radians(1.0)  # tilt error left after `calibrate pitch`
+    cam_height_err: float = 0.3            # cm, lens height vs. the configured value
 
 
 @dataclass

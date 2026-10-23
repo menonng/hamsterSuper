@@ -38,6 +38,7 @@ def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_sta
     """Run one episode and return a compact, JSON-friendly recording."""
     from ..env.hamster_env import HamsterMazeEnv
     from ..maps.grid_map import cell_of
+    from .monitor import camera_info
 
     env = HamsterMazeEnv(cfg, level=level, seed=seed, full_stack=full_stack)
     obs, _ = env.reset(options={"level": level})
@@ -66,7 +67,8 @@ def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_sta
         "true_walls": [[list(a), list(b)] for a, b in sorted(m.walls)],
         "start": list(m.start), "goal": list(m.goal), "dt": env.cfg.dt, "opt_cells": env.opt_cells,
         "ray_angles": [round(float(a), 4) for a in env.cfg.camera.ray_angles()],
-        "cam_forward": env.cfg.camera.mount_forward, "full_stack": bool(env.use_stack),
+        "cam_forward": env.cfg.camera.mount_forward, "cam": camera_info(env.cfg),
+        "full_stack": bool(env.use_stack),
         "frames": frames, "wall_events": events,
         "result": {"model_iter": model_iter, "success": bool(info.get("success")),
                    "time_s": info.get("time_s", round(t * env.cfg.dt, 1)), "collisions": env.collisions},

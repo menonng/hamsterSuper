@@ -1,7 +1,8 @@
 """Camera frame -> depth rays (the same 21 rays the policy was trained on).
 
-1. Segment wall pixels (default: walls darker than the floor; HSV range or a
-   custom function can be plugged in once real course photos are available).
+1. Segment wall pixels. The course has white walls on a black floor, so the
+   default is a brightness threshold ("bright"); "otsu" picks the threshold
+   per frame, "dark" is for dark walls, "hsv" takes a colour range.
 2. Clean the mask with a small morphological opening (removes floor dots and noise).
 3. Walk each ray's floor line in the image (RayLUT) and take the first wall pixel.
    Because the camera height/pitch are known, the image row gives the
@@ -14,12 +15,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..config import CameraSpec
-from ..sim.camera import RayLUT, wall_mask_dark
+from ..sim.camera import RayLUT, wall_mask_bright, wall_mask_dark
 
 
 @dataclass
 class SegmentationConfig:
-    method: str = "dark"                 # "dark" | "hsv"
+    method: str = "otsu"                 # "otsu" (auto brightness) | "bright" | "dark" | "hsv"
+    bright_threshold: int = 128          # gray > threshold -> wall (white walls, black floor)
     dark_threshold: int = 110            # gray < threshold -> wall
     hsv_lo: list = field(default_factory=lambda: [0, 0, 0])
     hsv_hi: list = field(default_factory=lambda: [180, 255, 90])
@@ -40,8 +42,10 @@ class Perception:
             import cv2
             hsv = cv2.cvtColor(rgb, cv2.COLOR_RGB2HSV)
             mask = cv2.inRange(hsv, np.array(s.hsv_lo, np.uint8), np.array(s.hsv_hi, np.uint8)) > 0
-        else:
+        elif s.method == "dark":
             mask = wall_mask_dark(rgb, s.dark_threshold)
+        else:
+            mask = wall_mask_bright(rgb, None if s.method == "otsu" else s.bright_threshold)
         if s.open_kernel > 1:
             try:
                 import cv2

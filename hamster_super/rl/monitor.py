@@ -145,6 +145,7 @@ class Replay:
                     "rays": np.asarray(env.last_rays).tolist(),
                     "ray_angles": env.cfg.camera.ray_angles().tolist(),
                     "cam_forward": env.cfg.camera.mount_forward,
+                    "cam": camera_info(env.cfg),
                     "action": np.asarray(env.prev_action).tolist(),
                     "step": t, "time_s": round(t * env.cfg.dt, 1), "collisions": env.collisions,
                     "opt_cells": env.opt_cells, "full_stack": bool(env.use_stack),
@@ -160,6 +161,15 @@ class Replay:
     def snapshot(self):
         with self.lock:
             return {**self.frame, "history": list(self.history)}
+
+
+def camera_info(cfg) -> dict:
+    """Camera / robot geometry for the 3D view."""
+    import math
+    c, r = cfg.camera, cfg.robot
+    return {"h": c.mount_height, "fwd": c.mount_forward, "pitch_deg": round(math.degrees(c.pitch), 2),
+            "hfov_deg": round(math.degrees(c.hfov), 2), "attach": c.attach_height, "module_h": c.module_height,
+            "body_h": r.body_height, "body_l": r.body_length, "body_w": r.body_width}
 
 
 def releases(run: Path):

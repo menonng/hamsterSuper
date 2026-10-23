@@ -85,3 +85,19 @@ def test_expert_reaches_goal_known_map():
         if te or tr:
             break
     assert info.get("success"), info
+
+
+def test_pitch_calibration_recovers_tilt():
+    """Render a wall at a known distance with a tilted camera and recover the tilt."""
+    import dataclasses
+    from hamster_super.robot.calibrate import pitch_from_base_row, wall_base_row
+    from hamster_super.sim.camera import wall_mask_bright
+    cfg = EnvConfig()
+    true_pitch = math.radians(37.0)
+    spec = dataclasses.replace(cfg.camera, pitch=true_pitch)
+    boxes = np.array([[30.0, -20.0, 30.5, 20.0]])          # wall face at x = 30
+    pose = (30.0 - 10.0 - spec.mount_forward, 0.0, 0.0)     # lens 10 cm from the face
+    img = Renderer(spec).render(pose, boxes)
+    v = wall_base_row(wall_mask_bright(img), range(spec.width // 2 - 6, spec.width // 2 + 7))
+    est = pitch_from_base_row(v, cfg.camera, 10.0)
+    assert abs(est - true_pitch) < math.radians(1.0)
