@@ -1,13 +1,16 @@
 # Deploys the training dashboard (the gh-pages branch, written by
-# hamster_super/rl/pages.py) to GitHub Pages with GitHub Actions.
+# hamster_super/rl/pages.py) to GitHub Pages with GitHub Actions. Triggered
+# after each "Pages snapshot" run (a push to gh-pages); it runs on the
+# default branch, which the github-pages environment allows to deploy.
 # It also switches the repository's Pages source to "GitHub Actions" (or
 # creates the Pages site) if it is not set up that way yet, so no manual
 # settings change is needed.
 name: Pages
 
 on:
-  push:
-    branches: [gh-pages]
+  workflow_run:
+    workflows: ["Pages snapshot"]
+    types: [completed]
   workflow_dispatch:
 
 permissions:
