@@ -85,6 +85,9 @@ class Trainer:
         self.best_eval = -1.0
         if args.resume:
             self.load(args.resume)
+        if args.set_level is not None:          # e.g. after changing the task
+            self.cur.level = args.set_level
+            self.cur.hist.clear()
         self.eval_maps = load_maps(args.eval_maps) if args.eval_maps and Path(args.eval_maps).exists() else None
         self.releaser = None
         if args.release_every > 0 and not args.no_release:
@@ -328,6 +331,7 @@ def main():
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--torch-threads", type=int, default=1)
     ap.add_argument("--start-level", type=int, default=0)
+    ap.add_argument("--set-level", type=int, default=None, help="override the curriculum level after --resume")
     ap.add_argument("--known-map", action="store_true", help="the planner knows the full map")
     ap.add_argument("--full-stack-prob", type=float, default=0.7,
                     help="fraction of episodes driven with odometry + particle-filter localization")
