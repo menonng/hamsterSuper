@@ -109,6 +109,7 @@ class HamsterMazeEnv(gym.Env):
             self.leg = 9.0 * one_way
         self.t = 0
         self.prev_action = np.zeros(3)
+        self.prev_rays = None
         self.collisions = 0
         self.pose_err = np.zeros(3)
         self._last_th = self.robot.th
@@ -193,7 +194,9 @@ class HamsterMazeEnv(gym.Env):
         self.line.update(self.planner, est, sigma=float(np.linalg.norm(self.pose_err[:2])) * 0.5 + 0.2,
                          bias=float(self.prev_action[2]))
         self.wp = self.line.waypoints()
-        return build_obs(cfg, rays, ir, est, self.wp[0], self.wp[1], self.prev_action[:2])
+        obs = build_obs(cfg, rays, ir, est, self.wp[0], self.wp[1], self.prev_action[:2], self.prev_rays)
+        self.prev_rays = np.asarray(rays, float).copy()
+        return obs
 
     # ------------------------------------------------------------------- step
     def step(self, action):

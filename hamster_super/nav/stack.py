@@ -23,7 +23,18 @@ WP_CLIP = 3.0
 
 
 def obs_dim(cfg: EnvConfig) -> int:
-    return cfg.camera.n_rays + 2 + 4 + 2
+    return cfg.camera.n_rays + 2 + 4 + 2 + 2
+
+
+def motion_features(rays, prev_rays) -> np.ndarray:
+    """How the camera picture moved since the last frame: mean change of the
+    ray distances (cm, negative = walls coming closer) and its mean size.
+    Driving forward with both near zero means the robot is blocked by a wall;
+    the same numbers come from the real camera every frame."""
+    if prev_rays is None:
+        return np.zeros(2, np.float32)
+    d = np.asarray(rays, float) - np.asarray(prev_rays, float)
+    return np.array([np.clip(d.mean() / 2.0, -3, 3), np.clip(np.abs(d).mean() / 2.0, 0, 3)], np.float32)
 
 
 def to_local(pose, pt) -> np.ndarray:
@@ -33,10 +44,11 @@ def to_local(pose, pt) -> np.ndarray:
     return np.array([c * dx + s * dy, -s * dx + c * dy])
 
 
-def build_obs(cfg: EnvConfig, rays, ir, pose_est, wp1, wp2, prev_action) -> np.ndarray:
+def build_obs(cfg: EnvConfig, rays, ir, pose_est, wp1, wp2, prev_action, prev_rays=None) -> np.ndarray:
     w1 = np.clip(to_local(pose_est, wp1) / GRID_SPACING, -WP_CLIP, WP_CLIP)
     w2 = np.clip(to_local(pose_est, wp2) / GRID_SPACING, -WP_CLIP, WP_CLIP)
-    return np.concatenate([np.asarray(rays) / cfg.camera.max_range, ir, w1, w2, prev_action]).astype(np.float32)
+    return np.concatenate([np.asarray(rays) / cfg.camera.max_range, ir, w1, w2, prev_action,
+                           motion_features(rays, prev_rays)]).astype(np.float32)
 
 
 def cam_origin(cfg: EnvConfig, pose) -> np.ndarray:
@@ -81,6 +93,7 @@ class NavStack:
         self.lat_odoms = [Odometry(cfg.robot, (0.0, 0.0, 0.0), delay_steps=k) for k in range(3)]
         self.pf = LatticeParticleFilter(start_pose, rng=rng) if localize else None
         self.prev_action = np.zeros(2)
+        self.prev_rays = None
         self.wp = (None, None)
         self.loc_range = 35.0
         self.map_max_spin = 0.12             # rad per step
@@ -134,7 +147,9 @@ class NavStack:
         self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0, bias=bias)
         self.wp = self.line.waypoints()
         self.prev_action = np.asarray(last_action, dtype=float)
-        return build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action[:2])
+        obs = build_obs(cfg, rays, ir, pose, self.wp[0], self.wp[1], self.prev_action[:2], self.prev_rays)
+        self.prev_rays = np.asarray(rays, float).copy()
+        return obs
 
     def wall_points(self, rays, ir) -> np.ndarray:
         """Wall-centerline points in the robot frame from camera rays + IR."""

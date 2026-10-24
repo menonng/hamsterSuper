@@ -122,6 +122,20 @@ class Trainer:
 
     def load(self, path):
         ck = torch.load(path, map_location="cpu", weights_only=False)
+        if ck.get("obs_dim", self.n_obs) < self.n_obs:
+            # new observation inputs: zero weights, so the old behaviour is kept exactly
+            # until training finds a use for them
+            extra = self.n_obs - ck["obs_dim"]
+            sd = ck["model"]
+            for net in ("actor", "critic"):
+                k = f"{net}.0.weight"
+                sd[k] = torch.cat([sd[k], torch.zeros(sd[k].shape[0], extra)], dim=1)
+            ck["opt"] = None
+            on = ck["obs_norm"]
+            on["mean"] = list(on["mean"]) + [0.0] * extra
+            on["var"] = list(on["var"]) + [1.0] * extra
+            print(f"expanded {path} from {ck['obs_dim']} to {self.n_obs} observations (optimizer reset)")
+            ck["obs_dim"] = self.n_obs
         if ck.get("act_dim", 2) < self.n_act:
             # older 2-action policy: keep everything, add a neutral line-bias output
             sd = ck["model"]
@@ -135,7 +149,8 @@ class Trainer:
             print(f"expanded {path} from {ck.get('act_dim', 2)} to {self.n_act} actions (optimizer reset)")
         else:
             self.ac.load_state_dict(ck["model"])
-            self.opt.load_state_dict(ck["opt"])
+            if ck.get("opt") is not None:
+                self.opt.load_state_dict(ck["opt"])
         self.norm.load_state_dict(ck["obs_norm"])
         a = self.args
         if getattr(a, "reopen_std", 0) > 0:
