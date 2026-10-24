@@ -178,7 +178,23 @@ def camera_info(cfg) -> dict:
     c, r = cfg.camera, cfg.robot
     return {"h": c.mount_height, "fwd": c.mount_forward, "pitch_deg": round(math.degrees(c.pitch), 2),
             "hfov_deg": round(math.degrees(c.hfov), 2), "attach": c.attach_height, "module_h": c.module_height,
+            "max_range": c.max_range,
             "body_h": r.body_height, "body_l": r.body_length, "body_w": r.body_width}
+
+
+def benchmarks(run: Path) -> list:
+    """Fixed-benchmark results (benchmark.jsonl), without the per-run details."""
+    f = Path(run) / "benchmark.jsonl"
+    out = []
+    if f.exists():
+        for line in f.read_text().splitlines():
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            r.pop("runs", None)
+            out.append(r)
+    return out
 
 
 def releases(run: Path):
@@ -222,6 +238,8 @@ def make_handler(run: Path, log: LogReader, replay: Replay | None):
                 return self._send(200, json.dumps({"start": n, "rows": rows}).encode())
             if path == "/api/releases":
                 return self._send(200, json.dumps(releases(run)).encode())
+            if path == "/api/benchmark":
+                return self._send(200, json.dumps(benchmarks(run)).encode())
             if path == "/api/replay":
                 snap = replay.snapshot() if replay else {"status": "replay disabled"}
                 return self._send(200, json.dumps(snap).encode())

@@ -137,6 +137,17 @@ class Trainer:
             self.ac.load_state_dict(ck["model"])
             self.opt.load_state_dict(ck["opt"])
         self.norm.load_state_dict(ck["obs_norm"])
+        a = self.args
+        if getattr(a, "reopen_std", 0) > 0:
+            # after a rule change: let the policy try things again (old habits are
+            # only unlearned if the alternatives get tried)
+            with torch.no_grad():
+                self.ac.log_std.clamp_(min=float(np.log(a.reopen_std)))
+            print(f"exploration reopened: std >= {a.reopen_std}")
+        if getattr(a, "renorm_count", 0) > 0 and self.norm.count > a.renorm_count:
+            # keep the statistics but let new observations move them quickly
+            print(f"observation normalizer: count {self.norm.count:.3g} -> {a.renorm_count:.3g}")
+            self.norm.count = float(a.renorm_count)
         self.iter, self.episodes = ck["iter"], ck.get("episodes", 0)
         self.cur.level = ck.get("level", self.cur.level)
         print(f"resumed {path} at iter {self.iter}, level {self.cur.level}")
@@ -247,6 +258,16 @@ class Trainer:
             return [record_episode(act, cfg, level, seed=it * 100 + i, model_iter=it) for i in range(n)]
         self.pages.publish_async(make, iteration=it)
 
+    def _benchmark_async(self, ck, rdir):
+        """Fixed benchmark of a released checkpoint in the background (2 processes,
+        low priority); results go to <run>/benchmark.jsonl and the release folder."""
+        if self.args.no_benchmark:
+            return
+        out = self.out / "benchmark.jsonl"
+        cmd = (f"nice -n 10 {sys.executable} -m hamster_super.rl.benchmark {ck} --out {out} --workers 2 "
+               f"> {rdir / 'benchmark.txt'} 2>&1")
+        subprocess.Popen(cmd, shell=True, cwd=str(Path(__file__).resolve().parents[2]))
+
     def _maybe_release_episode(self):
         a = self.args
         if a.release_unit == "episode" and a.release_every > 0 and self.episodes % a.release_every == 0:
@@ -331,6 +352,7 @@ class Trainer:
         from ..release.github_release import release_notes
         notes = release_notes(metrics)
         print(f"[release] {tag}: eval success {sr:.1%}", flush=True)
+        self._benchmark_async(ck, rdir)
         if self.releaser:
             self.releaser.publish(tag, f"HamsterSuper {tag}", notes,
                                   [ts, rdir / "policy.npz", ck, rdir / "metrics.json", rdir / "env_config.json"])
@@ -370,6 +392,11 @@ def main():
     ap.add_argument("--pages-every", type=int, default=0,
                     help="publish the dashboard to GitHub Pages (gh-pages branch) every N iterations")
     ap.add_argument("--pages-episodes", type=int, default=3, help="recorded runs per Pages update")
+    ap.add_argument("--reopen-std", type=float, default=0.0,
+                    help="on --resume: raise the policy std to at least this (re-explore after a rule change)")
+    ap.add_argument("--renorm-count", type=float, default=0.0,
+                    help="on --resume: cap the observation normalizer count so it adapts to new inputs quickly")
+    ap.add_argument("--no-benchmark", action="store_true", help="skip the fixed benchmark at each release")
     ap.add_argument("--monitor", action="store_true", help="also start the live training dashboard")
     ap.add_argument("--monitor-port", type=int, default=8001)
     args = ap.parse_args()

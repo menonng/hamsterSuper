@@ -104,7 +104,7 @@
         <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT line (corners and straights, relative to the next turn)</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
         <span><i class="sw" style="background:var(--red)"></i>Hitbox (collision footprint)</span>
-        <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
+        <span><i class="sw" style="background:var(--sky)"></i>Camera rays (faint dashed: no wall detected)</span>
         <span><i class="sw box" style="background:var(--red)"></i>Goal</span>
       </div>
       <div style="margin-top:10px;font-size:12px;color:var(--muted)" id="histlabel">Recent replay results (newest first)</div>
@@ -242,6 +242,14 @@ function renderTiles() {
     ['Next release', r.iter !== undefined ? 'iter ' + fmt.int((Math.floor(r.iter / 500) + 1) * 500) : '–'],
     ['Elapsed (this run)', hours >= 1 ? hours.toFixed(1) + ' h' : (r.elapsed_min || 0).toFixed(0) + ' min'],
   ];
+  // fixed benchmark (same courses and seeds every time; compare within one simulator version)
+  const b = benchData[benchData.length - 1];
+  if (b) {
+    const prev = benchData.slice(0, -1).reverse().find(x => x.env_version === b.env_version);
+    const delta = prev ? ` (${b.success_rate >= prev.success_rate ? '+' : ''}${((b.success_rate - prev.success_rate) * 100).toFixed(0)} pt)` : '';
+    tiles.push([`Benchmark · iter ${fmt.int(b.iter)}`, fmt.pct(b.success_rate) + delta]);
+    tiles.push(['Benchmark s/cell · contacts', `${b.seconds_per_cell != null ? b.seconds_per_cell.toFixed(2) : '–'} · ${b.collisions_per_episode.toFixed(0)}`]);
+  }
   $('tiles').replaceChildren(...tiles.map(([k, v]) => {
     const d = document.createElement('div'); d.className = 'tile';
     const a = document.createElement('div'); a.className = 'k'; a.textContent = k;
@@ -314,9 +322,12 @@ function drawMaze(s) {
   trail(s.trail, css('--pink'));
   const [px, py, th] = s.pose, cx = px + s.cam_forward * Math.cos(th), cy = py + s.cam_forward * Math.sin(th);
   ctx.strokeStyle = css('--sky'); ctx.lineWidth = 1; ctx.globalAlpha = .8;
-  s.rays.forEach((r, k) => { const a = th + s.ray_angles[k]; ctx.beginPath(); ctx.moveTo(X(cx), Y(cy));
+  s.rays.forEach((r, k) => { const a = th + s.ray_angles[k];
+    const miss = r >= ((s.cam && s.cam.max_range) || 45) - 0.1;   // nothing detected (open, or a missed detection)
+    ctx.globalAlpha = miss ? .25 : .8; ctx.setLineDash(miss ? [3, 4] : []);
+    ctx.beginPath(); ctx.moveTo(X(cx), Y(cy));
     ctx.lineTo(X(cx + r * Math.cos(a)), Y(cy + r * Math.sin(a))); ctx.stroke(); });
-  ctx.globalAlpha = 1;
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
   const bl = (s.cam && s.cam.body_l) || 4, bw = (s.cam && s.cam.body_w) || 3.5;
   const robot = (p, col, ring) => {   // the footprint the simulator collides with
     const c = Math.cos(p[2]), sn = Math.sin(p[2]);
@@ -372,6 +383,11 @@ async function pollLog() {
     lastOk = Date.now();
   } catch (e) {}
   setTimeout(pollLog, STATIC ? 60000 : 3000);
+}
+let benchData = [];
+async function pollBench() {
+  try { benchData = await getJSON(STATIC ? 'data/benchmark.json' : '/api/benchmark'); renderTiles(); } catch (e) {}
+  setTimeout(pollBench, STATIC ? 60000 : 30000);
 }
 async function pollReleases() {
   try { releasesData = await getJSON(STATIC ? 'data/releases.json' : '/api/releases'); renderReleases(); renderCharts(); } catch (e) {}
@@ -439,7 +455,7 @@ if (STATIC) {
   fetch('/api/info').then(r => r.json()).then(j => { $('run').textContent = j.run; });
   pollReplay();
 }
-pollLog(); pollReleases(); renderTiles();
+pollLog(); pollReleases(); pollBench(); renderTiles();
 
 // ----- 2D / 3D view switch (remembered per browser)
 const viewState = {dim: '3d', cam: 'chase'};
@@ -582,6 +598,10 @@ function init() {
   const rayGeo = new THREE.BufferGeometry();
   rayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 6), 3));
   const rays = new THREE.LineSegments(rayGeo, new THREE.LineBasicMaterial({transparent: true, opacity: .8}));
+  const missGeo = new THREE.BufferGeometry();
+  missGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 6), 3));
+  const raysMiss = new THREE.LineSegments(missGeo, new THREE.LineBasicMaterial({transparent: true, opacity: .2}));
+  rays.add(raysMiss);
   const pathGeo = new THREE.BufferGeometry();
   pathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(200 * 3), 3));
   const path = new THREE.Line(pathGeo, new THREE.LineBasicMaterial());
@@ -593,7 +613,7 @@ function init() {
   function buildTheme() {
     scene.background = col('--panel');
     scene.fog = new THREE.Fog(scene.background, 300, 900);
-    rays.material.color = col('--sky');
+    rays.material.color = col('--sky'); raysMiss.material.color = col('--sky');
     path.material.color = col('--green');
     trail.material.color = col('--pink');
     if (robot) scene.remove(robot, ghost);
@@ -686,9 +706,12 @@ function init() {
     const pa = rayGeo.attributes.position.array; let k = 0;
     // in the robot frame: the ray fan moves with the (smoothed) robot model
     const cf = s.cam_forward;
+    const pm = missGeo.attributes.position.array; let km = 0;
     s.rays.forEach((r, i) => { const a = s.ray_angles[i];
-      pa.set([cf, 0.15, 0, cf + r * Math.cos(a), 0.15, -r * Math.sin(a)], k); k += 6; });
-    rayGeo.setDrawRange(0, s.rays.length * 2); rayGeo.attributes.position.needsUpdate = true;
+      const seg = [cf, 0.15, 0, cf + r * Math.cos(a), 0.15, -r * Math.sin(a)];
+      if (r >= ((s.cam && s.cam.max_range) || 45) - 0.1) { pm.set(seg, km); km += 6; } else { pa.set(seg, k); k += 6; } });
+    rayGeo.setDrawRange(0, k / 3); rayGeo.attributes.position.needsUpdate = true;
+    missGeo.setDrawRange(0, km / 3); missGeo.attributes.position.needsUpdate = true;
     const pp = pathGeo.attributes.position.array; k = 0;
     const pts = s.line && s.line.length > 1 ? s.line
       : s.path && s.path.length ? [[s.est[0], s.est[1]], ...s.path.slice(1).map(c => [(c[0] + .5) * G, (c[1] + .5) * G])] : [];

@@ -13,6 +13,10 @@ import math
 from dataclasses import asdict, dataclass, field, fields, is_dataclass
 from pathlib import Path
 
+# Simulator rules version. Bump it whenever the physics, sensors, judging or the
+# meaning of an action changes: benchmark scores are only comparable within one version.
+ENV_VERSION = "2026.10.24-1"
+
 # ---- Map (measured values) ----
 GRID_SPACING = 9.0       # cm, spacing between floor dots
 WALL_LENGTH = 9.0        # cm

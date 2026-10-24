@@ -113,7 +113,7 @@ def read_log(run: Path) -> list:
 
 def export_site(run: Path, out: Path, episodes: list | None = None, title: str = ""):
     """Write index.html + data/*.json for a static dashboard into `out`."""
-    from .monitor import releases
+    from .monitor import benchmarks, releases
     out.mkdir(parents=True, exist_ok=True)
     data = out / "data"
     data.mkdir(exist_ok=True)
@@ -124,6 +124,7 @@ def export_site(run: Path, out: Path, episodes: list | None = None, title: str =
     now = int(time.time())
     (data / "log.json").write_text(json.dumps({"updated": now, "run": title or run.name, "rows": read_log(run)}))
     (data / "releases.json").write_text(json.dumps(releases(run)))
+    (data / "benchmark.json").write_text(json.dumps(benchmarks(run)))
     # room backgrounds for the dome around the 3D course (same images as in training)
     from ..sim.backgrounds import DEFAULT_DIR
     import shutil
