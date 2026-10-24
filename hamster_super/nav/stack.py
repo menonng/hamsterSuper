@@ -129,7 +129,7 @@ class NavStack:
             self.planner.set_goal(self.roundtrip.goal(cell_of(pose), pose, pose[2], self.belief.walls,
                                                       seen=self.belief.seen, free=self.belief.free_edges,
                                                       front=front_distance(rays, ir), strong=self.belief.strong_walls()))
-        self.planner.update(self.belief.walls, cell_of(pose))
+        self.planner.update(self.belief.walls, cell_of(pose), free=self.belief.free_edges)
         bias = float(last_action[2]) if len(last_action) > 2 else 0.0      # learned inside/outside line choice
         self.line.update(self.planner, pose, sigma=self.pf.spread if self.pf is not None else 0.0, bias=bias)
         self.wp = self.line.waypoints()

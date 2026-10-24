@@ -131,6 +131,17 @@ class BeliefMap:
     def update_ir(self, pose, ir, spec):
         """IR proximity hits: covers the camera's blind zone right in front."""
         x, y, th = pose
+        if len(ir) == 2 and min(ir) > 0.5:
+            # both front sensors see a wall very close: it is the wall straight ahead,
+            # even when the hit point is too near a dot to snap (and the camera is blind there)
+            k = round(th / (math.pi / 2))
+            if abs(th - k * math.pi / 2) < 0.45:
+                d = [(1, 0), (0, 1), (-1, 0), (0, -1)][k % 4]
+                c = (int(math.floor(x / G)), int(math.floor(y / G)))
+                fx = (c[0] + 0.5 + 0.5 * d[0]) * G - x
+                fy = (c[1] + 0.5 + 0.5 * d[1]) * G - y
+                if abs(fx * d[0] + fy * d[1]) < spec.ir_offset + spec.ir_range * 0.6:
+                    self._add(make_edge(*self._edge_pts(c, d)), self.hit_gain)
         ox, oy = x + spec.ir_offset * math.cos(th), y + spec.ir_offset * math.sin(th)
         for val, sign in zip(ir, (1, -1)):
             if val < 0.15:
@@ -140,6 +151,18 @@ class BeliefMap:
             e = self.snap(ox + d * math.cos(a), oy + d * math.sin(a))
             if e is not None:
                 self._add(e, self.hit_gain)
+
+    @staticmethod
+    def _edge_pts(c, d):
+        """The two lattice dots of cell c's side in direction d."""
+        i, j = c
+        if d == (1, 0):
+            return (i + 1, j), (i + 1, j + 1)
+        if d == (-1, 0):
+            return (i, j), (i, j + 1)
+        if d == (0, 1):
+            return (i, j + 1), (i + 1, j + 1)
+        return (i, j), (i + 1, j)
 
     def snap(self, px: float, py: float) -> Edge | None:
         gx, gy = px / G, py / G

@@ -18,7 +18,8 @@ class Planner:
         self.goal = tuple(goal)
         self.walls: set = set()
         self.dist: dict = {}
-        self._bfs_walls: set | None = None
+        self._bfs_walls = None
+        self.free = None
         self._bfs_dist: dict = {}
 
     def set_goal(self, goal):
@@ -37,11 +38,17 @@ class Planner:
             if self.in_bounds(n) and edge_between(c, n) not in walls:
                 yield n
 
-    def update(self, walls: set, current_cell=None):
+    def update(self, walls: set, current_cell=None, free: set | None = None):
         """Recompute the distance field. If the robot's cell becomes unreachable
-        (e.g. a false wall closed the only path) fall back to an empty map."""
-        if walls != self._bfs_walls:
-            self._bfs_walls = set(walls)
+        (e.g. a false wall closed the only path) fall back to an empty map.
+        free: edges the camera has seen to be open. With it, an edge not yet
+        seen costs more than a seen one, so the route follows the lane the robot
+        has actually looked at instead of cutting through a side wall it has not
+        seen yet (e.g. right at the start, in the camera's blind zone)."""
+        key = (frozenset(walls), frozenset(free) if free is not None else None)
+        if key != self._bfs_walls:
+            self._bfs_walls = key
+            self.free = free
             self._bfs_dist = self._bfs(walls)
         self.walls, self.dist = walls, self._bfs_dist
         if current_cell is not None and self.in_bounds(current_cell) and current_cell not in self.dist:
@@ -49,15 +56,37 @@ class Planner:
             self.dist = self._bfs(self.walls)
         return self.dist
 
+    UNSEEN_COST = 2.5
+
+    def cost(self, c, n) -> float:
+        free = getattr(self, "free", None)
+        if free is None:
+            return 1.0
+        return 1.0 if edge_between(c, n) in free else self.UNSEEN_COST
+
     def _bfs(self, walls):
-        dist = {self.goal: 0}
-        q = deque([self.goal])
-        while q:
-            c = q.popleft()
+        if getattr(self, "free", None) is None:
+            dist = {self.goal: 0}
+            q = deque([self.goal])
+            while q:
+                c = q.popleft()
+                for n in self.neighbors(c, walls):
+                    if n not in dist:
+                        dist[n] = dist[c] + 1
+                        q.append(n)
+            return dist
+        import heapq
+        dist = {self.goal: 0.0}
+        h = [(0.0, self.goal)]
+        while h:
+            d, c = heapq.heappop(h)
+            if d > dist[c]:
+                continue
             for n in self.neighbors(c, walls):
-                if n not in dist:
-                    dist[n] = dist[c] + 1
-                    q.append(n)
+                nd = d + self.cost(c, n)
+                if nd < dist.get(n, math.inf) - 1e-9:
+                    dist[n] = nd
+                    heapq.heappush(h, (nd, n))
         return dist
 
     # ---------------------------------------------------------------- queries
@@ -69,7 +98,7 @@ class Planner:
                 break
             best = None
             for n in self.neighbors(c, self.walls):
-                if self.dist.get(n, 1 << 30) == self.dist[c] - 1:
+                if n in self.dist and abs(self.dist[n] + self.cost(c, n) - self.dist[c]) < 1e-6:
                     d = (n[0] - c[0], n[1] - c[1])
                     score = 0 if d == prev_dir else 1
                     if best is None or score < best[0]:

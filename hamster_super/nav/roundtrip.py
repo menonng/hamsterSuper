@@ -215,7 +215,16 @@ class RoundTrip:
                     q.append(n)
         if best is None:          # everything reachable is visited: go home
             self.phase = BACK
+            self.target = None
             return self.start
+        # commit to the current target while it is still unexplored and about as
+        # good: re-deciding every step from the heading made the robot swing
+        # between two targets (and spin in place, e.g. right at the start)
+        cur = getattr(self, "target", None)
+        if cur is not None and cur != best[1] and cur in dist and not self.recent(cur) \
+                and not self._passed_by(cur, walls) and dist[cur] <= best[0] + 2:
+            best = (dist[cur], cur)
+        self.target = best[1]
         target = best[1]
         # keep going into the lane ahead so the line (and the speed) carries on:
         # straight on while that is open, and around a turn the camera has

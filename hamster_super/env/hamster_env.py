@@ -188,7 +188,7 @@ class HamsterMazeEnv(gym.Env):
             self.planner.set_goal(self.rt.goal(cell_of(est), est, est[2], self.belief.walls,
                                                seen=self.belief.seen, free=self.belief.free_edges,
                                                front=front_distance(rays, ir), strong=self.belief.strong_walls()))
-        self.planner.update(self.belief.walls, cell_of(est))
+        self.planner.update(self.belief.walls, cell_of(est), free=self.belief.free_edges)
         # the localization error the planner would report (in the full stack: particle spread)
         self.line.update(self.planner, est, sigma=float(np.linalg.norm(self.pose_err[:2])) * 0.5 + 0.2,
                          bias=float(self.prev_action[2]))
