@@ -26,7 +26,7 @@ class RobotSpec:
     body_length: float = 4.0         # cm (front-back)
     body_width: float = 3.5          # cm (wheels included); body_length x body_width is the collision footprint
     body_height: float = 3.0         # cm (approximate; measure the real robot)
-    collision_radius: float = 2.3    # cm, clearance radius used by the planner / racing line
+    collision_radius: float = 2.7    # cm, clearance radius for the racing line: half-diagonal of the footprint (turning)
     track_width: float = 3.0         # cm, distance between the left and right wheels
     max_speed: float = 10.0          # cm/s at wheel command 100 (measured on the real robot)
     motor_tau: float = 0.06          # s, motor response time constant

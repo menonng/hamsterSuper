@@ -33,7 +33,7 @@ OUT, BACK, DONE = "out", "back", "done"
 
 
 class RoundTrip:
-    def __init__(self, start_cell, bounds, extend: int = 3, dead_end_dist: float = 3.0,
+    def __init__(self, start_cell, bounds, extend: int = 4, dead_end_dist: float = 3.0,
                  mode: str = "roundtrip", start_heading: float | None = None):
         self.mode = mode
         self.start = tuple(start_cell)
@@ -217,7 +217,10 @@ class RoundTrip:
             self.phase = BACK
             return self.start
         target = best[1]
-        # keep going straight into unknown space so the line (and the speed) carries on
+        # keep going into the lane ahead so the line (and the speed) carries on:
+        # straight on while that is open, and around a turn the camera has
+        # already seen (straight is a known wall, exactly one side is open) -
+        # so the racing line can take the corner instead of stopping in it
         prev = target
         step = None
         for n in self.open_neighbors(target, walls):
@@ -225,7 +228,15 @@ class RoundTrip:
                 step = (target[0] - n[0], target[1] - n[1])
         for _ in range(self.extend if step else 0):
             n = (prev[0] + step[0], prev[1] + step[1])
-            if not self.in_bounds(n) or edge_between(prev, n) in walls or self.recent(n):
+            if not self.in_bounds(n) or edge_between(prev, n) in walls:
+                sides = [(-step[1], step[0]), (step[1], -step[0])]
+                opts = [d for d in sides if self.in_bounds((prev[0] + d[0], prev[1] + d[1]))
+                        and edge_between(prev, (prev[0] + d[0], prev[1] + d[1])) not in walls]
+                if len(opts) != 1:
+                    break
+                step = opts[0]
+                n = (prev[0] + step[0], prev[1] + step[1])
+            if self.recent(n):
                 break
             prev = n
         return prev

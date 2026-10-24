@@ -124,7 +124,8 @@ def test_racing_line_backs_off_when_uncertain():
     sure.update(p, cell_center(m.start), sigma=0.0)
     unsure.update(p, cell_center(m.start), sigma=1.0)
     assert _min_wall_distance(unsure.line, m.wall_boxes()) > _min_wall_distance(sure.line, m.wall_boxes()) + 1.0
-    assert all(b["t"] > a["t"] for a, b in zip(sure.corners, unsure.corners))
+    corner = lambda rl: [c for c in rl.corners if c["kind"] == "corner"]
+    assert all(b["t"] > a["t"] for a, b in zip(corner(sure), corner(unsure)))
 
 
 def test_roundtrip_finds_dead_end_and_returns():
@@ -190,3 +191,32 @@ def test_one_lap_with_waypoint_follower():
             obs, _, te, tr, info = env.step((fwd - turn, fwd + turn))
             done = te or tr
         assert info["success"] and info["lap_frac"] >= 0.9
+
+
+def test_line_side_choice_on_straights_and_wide_sections():
+    """The line action moves the line sideways everywhere (straights too), uses
+    the full width of wide sections, and never brings the robot to a wall."""
+    from hamster_super.maps.generator import generate_course
+    from hamster_super.maps.grid_map import cell_center
+    from hamster_super.nav.racing_line import RacingLine
+    offsets = {}
+    for b in (-1.0, 1.0):
+        off = []
+        for k in range(6):
+            m = generate_course(np.random.default_rng(k), level=3, open_course=True, wide_prob=0.7)
+            p = Planner(m.cell_bounds(), m.goal)
+            p.update(m.walls)
+            rl = RacingLine(horizon=60)
+            line = rl.update(p, cell_center(m.start), sigma=0.0, bias=b)
+            assert _min_wall_distance(line, m.wall_boxes()) > 2.3
+            # lateral offset of the line in the middle of each straight segment
+            for a, c in zip(line[:-1], line[1:]):
+                d = c - a
+                if np.linalg.norm(d) > 12 and min(abs(d[0]), abs(d[1])) < 0.5:
+                    mid = (a + c) / 2
+                    axis = 1 if abs(d[0]) > abs(d[1]) else 0            # lateral axis
+                    rel = mid[axis] / 9.0 - np.floor(mid[axis] / 9.0) - 0.5   # -0.5..0.5 inside the cell
+                    left = np.array([-d[1], d[0]])[axis] > 0              # +axis is the left side
+                    off.append(rel if left else -rel)
+        offsets[b] = np.mean(off)
+    assert offsets[1.0] > 0.1 and offsets[-1.0] < -0.1                    # left vs right of the lane

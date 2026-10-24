@@ -101,7 +101,7 @@
         <span><i class="sw" id="swTrue" style="background:var(--truewall);opacity:.5"></i><span id="lgTrue">Actual walls</span></span>
         <span><i class="sw" style="background:var(--blue)"></i><span id="lgFound">Walls the robot found</span></span>
         <span><i class="sw" style="background:var(--green)"></i>Racing line</span>
-        <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT corner</span>
+        <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT line (corners and straights, relative to the next turn)</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
         <span><i class="sw" style="background:var(--red)"></i>Hitbox (collision footprint)</span>
         <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
@@ -297,11 +297,15 @@ function drawMaze(s) {
     ctx.moveTo(X(s.est[0]), Y(s.est[1])); for (const c of s.path.slice(1)) ctx.lineTo(X((c[0] + .5) * G), Y((c[1] + .5) * G));
     ctx.stroke(); ctx.setLineDash([]);
   }
-  for (const c of (s.corners || [])) {        // inside / outside call per corner
+  for (const c of (s.corners || [])) {        // inside / outside call per corner and straight cell
     const lab = CORNER[c.label]; if (!lab) continue;
     const cx = X((c.cell[0] + .5) * G), cy = Y((c.cell[1] + .5) * G);
-    ctx.font = '600 11px system-ui'; const w = ctx.measureText(lab.text).width + 10;
-    ctx.fillStyle = css(lab.bg); ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - 9, w, 18, 9); ctx.fill();
+    const small = c.kind === 'straight';
+    ctx.font = small ? '600 9px system-ui' : '600 11px system-ui'; const w = ctx.measureText(lab.text).width + (small ? 6 : 10);
+    const hh = small ? 13 : 18;
+    ctx.globalAlpha = small ? .8 : 1;
+    ctx.fillStyle = css(lab.bg); ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - hh / 2, w, hh, hh / 2); ctx.fill();
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#1B2A5E'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(lab.text, cx, cy + 0.5);
     ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
   }
@@ -721,7 +725,9 @@ function init() {
     for (const c of corners) {
       if (!['in', 'mid', 'out'].includes(c.label)) continue;
       const sp = new THREE.Sprite(tagMaterial(c.label));
-      sp.position.copy(V((c.cell[0] + .5) * G, (c.cell[1] + .5) * G, 6)); sp.scale.set(5, 2.5, 1);
+      const small = c.kind === 'straight';      // straights get a smaller, lower tag than corners
+      sp.position.copy(V((c.cell[0] + .5) * G, (c.cell[1] + .5) * G, small ? 4.5 : 6));
+      sp.scale.set(small ? 3.4 : 5, small ? 1.7 : 2.5, 1);
       tagGroup.add(sp);
     }
   }

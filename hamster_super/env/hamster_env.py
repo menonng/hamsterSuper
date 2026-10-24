@@ -35,7 +35,7 @@ class HamsterMazeEnv(gym.Env):
         self.rays = DepthRays(self.cfg.camera)
         n = obs_dim(self.cfg)
         self.observation_space = gym.spaces.Box(-np.inf, np.inf, (n,), np.float32)
-        # left wheel, right wheel, racing-line bias (inside -1 ... +1 outside)
+        # left wheel, right wheel, racing-line side (+1 left ... -1 right of the lane, everywhere)
         self.action_space = gym.spaces.Box(-1.0, 1.0, (3,), np.float32)
         self.map: GridMap | None = None
         self.cur_level = level

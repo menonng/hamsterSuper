@@ -76,7 +76,7 @@ class Trainer:
         torch.manual_seed(args.seed)
         torch.set_num_threads(max(1, args.torch_threads))
         self.n_obs = obs_dim(self.cfg)
-        self.n_act = 3            # left wheel, right wheel, racing-line bias (inside/outside)
+        self.n_act = 3            # left wheel, right wheel, racing-line side (left/right = in/out, learned)
         self.ac = ActorCritic(self.n_obs, self.n_act, self.ppo.hidden)
         self.opt = torch.optim.Adam(self.ac.parameters(), lr=self.ppo.lr, eps=1e-5)
         self.norm = RunningNorm(self.n_obs)
