@@ -7,7 +7,7 @@ from collections import deque
 import numpy as np
 
 from ..config import DomainRandomization, RobotSpec
-from .geometry import raycast, resolve_collisions
+from .geometry import raycast, resolve_rect
 
 
 def wrap(a: float) -> float:
@@ -46,7 +46,7 @@ class SimRobot:
         h = dt / substeps
         a = 1.0 - math.exp(-h / max(self.tau, 1e-3))
         collided = False
-        r = self.spec.collision_radius
+        hl, hw = self.spec.body_length / 2, self.spec.body_width / 2   # the footprint drawn in the 3D view
         for _ in range(substeps):
             self.vl += a * (target[0] - self.vl)
             self.vr += a * (target[1] - self.vr)
@@ -60,7 +60,7 @@ class SimRobot:
                                              if self.dr.enabled else 0.0))
             nx = self.x + v * math.cos(self.th) * h
             ny = self.y + v * math.sin(self.th) * h
-            c, hit = resolve_collisions(np.array([nx, ny]), r, boxes)
+            c, hit = resolve_rect(np.array([nx, ny]), self.th, hl, hw, boxes)
             if hit:
                 collided = True
                 # wall friction: robot grinds and loses speed

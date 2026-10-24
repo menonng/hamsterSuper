@@ -349,8 +349,8 @@ def main():
     ap.add_argument("--start-level", type=int, default=0)
     ap.add_argument("--set-level", type=int, default=None, help="override the curriculum level after --resume")
     ap.add_argument("--known-map", action="store_true", help="the planner knows the full map")
-    ap.add_argument("--full-stack-prob", type=float, default=0.5,
-                    help="fraction of episodes driven with odometry + particle-filter localization")
+    ap.add_argument("--full-stack-prob", type=float, default=0.0,
+                    help="fraction of episodes driven with odometry + particle-filter localization (0: walls judged at the real pose)")
     ap.add_argument("--out", default="runs/ppo")
     ap.add_argument("--resume", default=None)
     ap.add_argument("--log-every", type=int, default=10)

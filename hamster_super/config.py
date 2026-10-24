@@ -24,9 +24,9 @@ WALL_HEIGHT = 2.5        # cm
 class RobotSpec:
     """Robomation Hamster (approximate)."""
     body_length: float = 4.0         # cm (front-back)
-    body_width: float = 3.5          # cm
+    body_width: float = 3.5          # cm (wheels included); body_length x body_width is the collision footprint
     body_height: float = 3.0         # cm (approximate; measure the real robot)
-    collision_radius: float = 2.3    # cm, circular collision approximation
+    collision_radius: float = 2.3    # cm, clearance radius used by the planner / racing line
     track_width: float = 3.0         # cm, distance between the left and right wheels
     max_speed: float = 10.0          # cm/s at wheel command 100 (measured on the real robot)
     motor_tau: float = 0.06          # s, motor response time constant
@@ -80,8 +80,8 @@ class DomainRandomization:
     ray_dropout: float = 0.03
     ray_spurious: float = 0.01             # probability of a false short reading
     ir_noise_std: float = 0.05
-    pose_err_pos: float = 2.0              # cm, max localization error shown to the planner
-    pose_err_yaw: float = math.radians(4)
+    pose_err_pos: float = 0.0              # cm, max localization error shown to the planner
+    pose_err_yaw: float = 0.0             # 0: walls are judged at exactly the robot's real pose
     calib_error: float = 0.07              # residual error of the speed/track calibration
     cam_pitch_err: float = math.radians(1.0)  # tilt error left after `calibrate pitch`
     cam_height_err: float = 0.3            # cm, lens height vs. the configured value

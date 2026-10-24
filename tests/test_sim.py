@@ -7,7 +7,7 @@ from hamster_super.env.hamster_env import HamsterMazeEnv
 from hamster_super.maps.parser import load_map
 from hamster_super.robot.perception import Perception
 from hamster_super.sim.camera import Renderer
-from hamster_super.sim.geometry import circle_penetration, raycast
+from hamster_super.sim.geometry import circle_penetration, raycast, rect_penetration
 from hamster_super.sim.robot import SimRobot
 from hamster_super.sim.sensors import DepthRays
 
@@ -26,8 +26,9 @@ def test_robot_cannot_pass_through_wall():
     for _ in range(30):
         hit |= r.step((1.0, 1.0), 0.1, 4, boxes)
     assert hit
-    assert r.x < 10.0 - RobotSpec().collision_radius + 1e-6
-    assert circle_penetration(r.pose[:2], RobotSpec().collision_radius - 1e-3, boxes)[0] == 0
+    spec = RobotSpec()
+    assert r.x < 10.0 - spec.body_length / 2 + 1e-6
+    assert rect_penetration(r.pose[:2], r.th, spec.body_length / 2 - 1e-3, spec.body_width / 2 - 1e-3, boxes)[0] == 0
 
 
 def test_straight_drive_speed():
@@ -124,3 +125,19 @@ def test_perception_ignores_room_background():
     e = np.concatenate(errs)
     assert np.median(e) < 0.5
     assert (e > 2.0).mean() < 0.06
+
+
+def test_footprint_never_inside_walls():
+    """The collision shape is the robot's drawn footprint (rectangle), also while
+    turning against walls: no part of the model may end up inside a wall."""
+    m = load_map("maps/example_02_maze.txt")
+    boxes = m.wall_boxes()
+    spec = RobotSpec()
+    rng = np.random.default_rng(1)
+    r = SimRobot(spec, DomainRandomization(), rng)
+    r.reset((4.5, 4.5, 0.3))
+    worst = 0.0
+    for _ in range(1500):
+        r.step(rng.uniform(-1, 1, 2) if rng.random() < 0.3 else (1.0, 0.8), 0.1, 4, boxes)
+        worst = max(worst, rect_penetration(r.pose[:2], r.th, spec.body_length / 2, spec.body_width / 2, boxes)[0])
+    assert worst < 0.05

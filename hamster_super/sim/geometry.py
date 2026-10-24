@@ -1,6 +1,8 @@
 """Vectorized 2D geometry against axis-aligned wall boxes."""
 from __future__ import annotations
 
+import math
+
 import numpy as np
 
 
@@ -68,6 +70,47 @@ def resolve_collisions(center: np.ndarray, radius: float, boxes: np.ndarray, ite
     collided = False
     for _ in range(iters):
         pen, push = circle_penetration(c, radius, boxes)
+        if pen <= 1e-9:
+            break
+        collided = True
+        c = c + push * 1.001
+    return c, collided
+
+
+def rect_penetration(center: np.ndarray, th: float, half_len: float, half_wid: float, boxes: np.ndarray):
+    """Oriented rectangle (the robot's footprint) vs axis-aligned boxes, by the
+    separating-axis test. Returns (depth, push-out vector) of the deepest overlap."""
+    if boxes.shape[0] == 0:
+        return 0.0, np.zeros(2)
+    c, s = math.cos(th), math.sin(th)
+    ac, as_ = abs(c), abs(s)
+    bc = np.stack([(boxes[:, 0] + boxes[:, 2]) / 2, (boxes[:, 1] + boxes[:, 3]) / 2], axis=1)
+    bx, by = (boxes[:, 2] - boxes[:, 0]) / 2, (boxes[:, 3] - boxes[:, 1]) / 2
+    d = bc - center
+    axes = np.array([[1.0, 0.0], [0.0, 1.0], [c, s], [-s, c]])
+    dist = d @ axes.T                                                  # (B, 4) signed
+    reach = np.stack([half_len * ac + half_wid * as_ + bx,             # world x
+                      half_len * as_ + half_wid * ac + by,             # world y
+                      half_len + bx * ac + by * as_,                   # robot forward
+                      half_wid + bx * as_ + by * ac], axis=1)          # robot side
+    overlap = reach - np.abs(dist)
+    a = np.argmin(overlap, axis=1)
+    depth = overlap[np.arange(len(boxes)), a]
+    k = int(np.argmax(depth))
+    if depth[k] <= 0:
+        return 0.0, np.zeros(2)
+    ax = axes[a[k]]
+    sign = -1.0 if dist[k, a[k]] > 0 else 1.0
+    return float(depth[k]), sign * ax * depth[k]
+
+
+def resolve_rect(center: np.ndarray, th: float, half_len: float, half_wid: float, boxes: np.ndarray,
+                 iters: int = 6):
+    """Push the robot footprint out of all boxes. Returns (new center, collided flag)."""
+    c = center.copy()
+    collided = False
+    for _ in range(iters):
+        pen, push = rect_penetration(c, th, half_len, half_wid, boxes)
         if pen <= 1e-9:
             break
         collided = True

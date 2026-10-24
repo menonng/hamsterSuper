@@ -103,7 +103,7 @@
         <span><i class="sw" style="background:var(--green)"></i>Racing line</span>
         <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT corner</span>
         <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
-        <span><i class="sw" style="background:var(--orange)"></i>Estimated pose (where the robot thinks it is; walls are mapped from here)</span>
+        <span><i class="sw" style="background:var(--red)"></i>Hitbox (collision footprint)</span>
         <span><i class="sw" style="background:var(--sky)"></i>Camera rays</span>
         <span><i class="sw box" style="background:var(--red)"></i>Goal</span>
       </div>
@@ -313,7 +313,15 @@ function drawMaze(s) {
   s.rays.forEach((r, k) => { const a = th + s.ray_angles[k]; ctx.beginPath(); ctx.moveTo(X(cx), Y(cy));
     ctx.lineTo(X(cx + r * Math.cos(a)), Y(cy + r * Math.sin(a))); ctx.stroke(); });
   ctx.globalAlpha = 1;
-  const robot = (p, col, ring) => { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(X(p[0]), Y(p[1]), 2.2 * sc, 0, 7); ctx.fill();
+  const bl = (s.cam && s.cam.body_l) || 4, bw = (s.cam && s.cam.body_w) || 3.5;
+  const robot = (p, col, ring) => {   // the footprint the simulator collides with
+    const c = Math.cos(p[2]), sn = Math.sin(p[2]);
+    ctx.fillStyle = col; ctx.beginPath();
+    [[1, 1], [1, -1], [-1, -1], [-1, 1]].forEach(([a, b], i) => {
+      const x = p[0] + a * bl / 2 * c - b * bw / 2 * sn, y = p[1] + a * bl / 2 * sn + b * bw / 2 * c;
+      i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y));
+    });
+    ctx.closePath(); ctx.fill();
     ctx.strokeStyle = ring; ctx.lineWidth = 2; ctx.stroke();
     ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1])); ctx.lineTo(X(p[0] + 3 * Math.cos(p[2])), Y(p[1] + 3 * Math.sin(p[2]))); ctx.stroke(); };
   robot(s.pose, css('--pink'), css('--panel'));
@@ -549,9 +557,13 @@ function init() {
     body.position.y = 0.3 + (k.body_h - 0.3) / 2; body.castShadow = true; g.add(body);
     const dark = new THREE.MeshStandardMaterial({color: 0x2a2f3c, roughness: .9});
     const wheelGeo = new THREE.CylinderGeometry(0.9, 0.9, 0.5, 20);
-    for (const z of [-(k.body_w / 2 + 0.2), k.body_w / 2 + 0.2]) {
+    for (const z of [-(k.body_w / 2 - 0.25), k.body_w / 2 - 0.25]) {   // inside the footprint
       const w = new THREE.Mesh(wheelGeo, dark); w.rotation.x = Math.PI / 2; w.position.set(0, 0.9, z); w.castShadow = true; g.add(w);
     }
+    // the collision footprint (exactly what the simulator uses for wall contact)
+    const fp = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(k.body_l, k.body_w)),
+      new THREE.LineBasicMaterial({color: css('--red')}));
+    fp.rotation.x = -Math.PI / 2; fp.position.y = 0.05; g.add(fp);
     const attach = new THREE.Mesh(new THREE.BoxGeometry(k.body_l * .6, k.attach, k.body_w * .6), dark);
     attach.position.y = k.body_h + k.attach / 2; g.add(attach);
     const camBox = new THREE.Mesh(camGeo, new THREE.MeshStandardMaterial({color: 0x3a4152, roughness: .6}));
@@ -732,14 +744,12 @@ function init() {
   function frame() {
     requestAnimationFrame(frame);
     if (!visible || !target) return;
-    smooth[0] += (target[0] - smooth[0]) * .35; smooth[1] += (target[1] - smooth[1]) * .35;
-    smooth[2] = angLerp(smooth[2], target[2], .35);
+    smooth[0] = target[0]; smooth[1] = target[1]; smooth[2] = target[2];   // drawn exactly where the simulator has it
     const [x, y, th] = smooth, fwd = new THREE.Vector3(Math.cos(th), 0, -Math.sin(th));
     robot.position.copy(V(x, y)); robot.rotation.y = th;
     rays.position.copy(V(x, y)); rays.rotation.y = th;
     if (est && smoothEst) {   // same interpolation as the robot model: both move at the same pace
-      smoothEst[0] += (est[0] - smoothEst[0]) * .35; smoothEst[1] += (est[1] - smoothEst[1]) * .35;
-      smoothEst[2] = angLerp(smoothEst[2], est[2], .35);
+      smoothEst[0] = est[0]; smoothEst[1] = est[1]; smoothEst[2] = est[2];
       ghost.position.copy(V(smoothEst[0], smoothEst[1])); ghost.rotation.y = smoothEst[2];
     }
     if (camMode === 'chase') {
