@@ -98,6 +98,27 @@ def _min_wall_distance(line, boxes):
     return worst
 
 
+def _follow(env, obs, k, state):
+    """Simple waypoint follower; walls only block, so when it is stuck against a
+    wall it backs off for a moment (as the trained policy has to)."""
+    pose = env.robot.pose.copy()
+    if state.get("back", 0) > 0:
+        state["back"] -= 1
+        return (-0.6, -0.6)
+    if state.get("prev") is not None and np.allclose(state["prev"], pose, atol=1e-3):
+        state["stuck"] = state.get("stuck", 0) + 1
+    else:
+        state["stuck"] = 0
+    state["prev"] = pose
+    if state["stuck"] >= 3:
+        state["stuck"], state["back"] = 0, 4
+        return (-0.6, -0.6)
+    ang = math.atan2(obs[k + 1], obs[k])
+    fwd = max(0.0, math.cos(ang)) ** 3 * 0.9
+    turn = float(np.clip(1.5 * ang, -0.7, 0.7))
+    return (fwd - turn, fwd + turn)
+
+
 def test_racing_line_cuts_corners_but_clears_walls():
     from hamster_super.maps.grid_map import cell_center
     from hamster_super.nav.racing_line import RacingLine
@@ -139,11 +160,9 @@ def test_roundtrip_finds_dead_end_and_returns():
     for _ in range(4):
         obs, _ = env.reset(options={"level": 2})
         done = False
+        state = {}
         while not done:
-            ang = math.atan2(obs[k + 1], obs[k])
-            fwd = max(0.0, math.cos(ang)) ** 3 * 0.9
-            turn = float(np.clip(1.5 * ang, -0.7, 0.7))
-            obs, _, te, tr, info = env.step((fwd - turn, fwd + turn))
+            obs, _, te, tr, info = env.step(_follow(env, obs, k, state))
             done = te or tr
         wins += info["success"] and info["turned"]
     assert wins == 4
@@ -184,11 +203,9 @@ def test_one_lap_with_waypoint_follower():
     for _ in range(3):
         obs, _ = env.reset(options={"level": 3})
         done = False
+        state = {}
         while not done:
-            ang = math.atan2(obs[k + 1], obs[k])
-            fwd = max(0.0, math.cos(ang)) ** 3 * 0.9
-            turn = float(np.clip(1.5 * ang, -0.7, 0.7))
-            obs, _, te, tr, info = env.step((fwd - turn, fwd + turn))
+            obs, _, te, tr, info = env.step(_follow(env, obs, k, state))
             done = te or tr
         assert info["success"] and info["lap_frac"] >= 0.9
 

@@ -7,7 +7,7 @@ from collections import deque
 import numpy as np
 
 from ..config import DomainRandomization, RobotSpec
-from .geometry import raycast, resolve_rect
+from .geometry import raycast, rect_penetration
 
 
 def wrap(a: float) -> float:
@@ -56,17 +56,25 @@ class SimRobot:
                 vr *= 1 + self.rng.normal(0, self.dr.slip_std)
             v = 0.5 * (vl + vr)
             w = (vr - vl) / self.track
-            self.th = wrap(self.th + w * h + (self.rng.normal(0, self.dr.heading_drift_std) / substeps
-                                             if self.dr.enabled else 0.0))
-            nx = self.x + v * math.cos(self.th) * h
-            ny = self.y + v * math.sin(self.th) * h
-            c, hit = resolve_rect(np.array([nx, ny]), self.th, hl, hw, boxes)
-            if hit:
+            nth = wrap(self.th + w * h + (self.rng.normal(0, self.dr.heading_drift_std) / substeps
+                                          if self.dr.enabled else 0.0))
+            nx = self.x + v * math.cos(nth) * h
+            ny = self.y + v * math.sin(nth) * h
+            # walls only block: a motion that would put the footprint into a wall does
+            # not happen (no pushing out, no sliding along the wall). Try the full
+            # motion, then turning only, then driving only; otherwise stay put.
+            for cx, cy, ct in ((nx, ny, nth), (self.x, self.y, nth),
+                               (self.x + v * math.cos(self.th) * h, self.y + v * math.sin(self.th) * h, self.th)):
+                if rect_penetration(np.array([cx, cy]), ct, hl, hw, boxes)[0] <= 1e-9:
+                    break
+            else:
+                cx, cy, ct = self.x, self.y, self.th
+            if (cx, cy, ct) != (nx, ny, nth):
                 collided = True
-                # wall friction: robot grinds and loses speed
+                # wheels slip against the wall: the motors lose speed
                 self.vl *= 0.5
                 self.vr *= 0.5
-            self.x, self.y = float(c[0]), float(c[1])
+            self.x, self.y, self.th = float(cx), float(cy), float(ct)
         return collided
 
     # --------------------------------------------------------------- sensors

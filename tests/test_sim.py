@@ -141,3 +141,19 @@ def test_footprint_never_inside_walls():
         r.step(rng.uniform(-1, 1, 2) if rng.random() < 0.3 else (1.0, 0.8), 0.1, 4, boxes)
         worst = max(worst, rect_penetration(r.pose[:2], r.th, spec.body_length / 2, spec.body_width / 2, boxes)[0])
     assert worst < 0.05
+
+
+def test_walls_block_without_pushing():
+    """Driving at an angle into a wall: the robot stops at the wall instead of
+    being pushed out sideways or sliding along it."""
+    boxes = np.array([[10.0, -20.0, 10.5, 20.0]])
+    r = SimRobot(RobotSpec(), DomainRandomization(enabled=False), np.random.default_rng(0))
+    r.reset((0.0, 0.0, math.radians(40)))
+    for _ in range(40):
+        r.step((1.0, 1.0), 0.1, 4, boxes)
+    y_at_wall = r.y
+    for _ in range(20):
+        hit = r.step((1.0, 1.0), 0.1, 4, boxes)
+    assert hit
+    assert abs(r.y - y_at_wall) < 0.05          # no sliding along the wall
+    assert abs(r.th - math.radians(40)) < 1e-6  # not turned by the wall

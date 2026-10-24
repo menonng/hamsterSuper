@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Simulator rules version. Bump it whenever the physics, sensors, judging or the
 # meaning of an action changes: benchmark scores are only comparable within one version.
-ENV_VERSION = "2026.10.24-1"
+ENV_VERSION = "2026.10.24-2"            # -2: walls only block motion (no push-out, no sliding)
 
 # ---- Map (measured values) ----
 GRID_SPACING = 9.0       # cm, spacing between floor dots
