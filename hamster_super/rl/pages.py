@@ -34,7 +34,7 @@ MAX_ROWS = 1500
 
 # ------------------------------------------------------------------ recording
 def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_stack: bool = False,
-                   max_steps: int = 1500) -> dict:
+                   max_steps: int = 4000) -> dict:
     """Run one episode and return a compact, JSON-friendly recording."""
     from ..env.hamster_env import HamsterMazeEnv
     from ..maps.grid_map import cell_of
