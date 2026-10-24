@@ -25,7 +25,7 @@ from ..maps.generator import COURSE_LEVELS, generate_course, generate_wide_cours
 
 # (name, level, map seed, style, one-way?) - never change existing entries;
 # append new ones and bump BENCH_VERSION instead
-BENCH_VERSION = 1
+BENCH_VERSION = 2          # 2: lap courses never widen the blocks at the start/finish line
 REPEATS = 3          # each course driven with 3 fixed disturbance seeds
 SPECS = (
     [(f"race-hairpin-oneway-{i}", COURSE_LEVELS - 1, 1000 + i, "hairpin", True) for i in range(4)]

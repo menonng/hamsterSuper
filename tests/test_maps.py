@@ -74,3 +74,19 @@ def test_wide_straight_courses():
                             ((i + 1, j), (i + 1, j + 1)), ((i, j + 1), (i, j + 2)), ((i + 1, j + 1), (i + 1, j + 2))])
             assert any(wide_at(i, j) or wide_v(i, j) for i in range(n - 2) for j in range(n - 2)), m.name
     assert made >= 20
+
+
+def test_race_courses_have_no_shortcut_across_the_line():
+    """The whole course is the shortest way from start to finish: a lap cut at
+    the start/finish line (or a one-way course) has no shortcut."""
+    from hamster_super.maps.generator import generate_course
+    from hamster_super.maps.grid_map import edge_between
+    from hamster_super.nav.planner import Planner
+    for k in range(40):
+        m = generate_course(np.random.default_rng(k), 5)
+        walls = set(m.walls) | ({edge_between(m.start, m.goal)} if m.kind == "lap" else set())
+        p = Planner(m.cell_bounds(), m.goal)
+        p.update(walls)
+        n = m.cell_bounds()[2] + 1
+        # the drive covers most of the arena (wide sections may be crossed diagonally)
+        assert p.dist[m.start] >= 0.55 * n * n, m.name

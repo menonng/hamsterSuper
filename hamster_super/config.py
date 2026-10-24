@@ -102,7 +102,7 @@ class EnvConfig:
     race_min_coverage: float = 0.85        # share of arena cells to visit before a finish is believed
     race_border: bool = True               # the arena boundary is a known wall (courses use every cell)
     race_recent_steps: int = 0             # cells visited within this many steps count as driven
-    course_prob: float = 0.9               # race courses filling the whole N x N area (lap or one-way, wide parts)
+    course_prob: float = 1.0               # race courses filling the whole N x N area (lap or one-way, wide parts)
     lap_prob: float = 0.0                  # older closed circuits that use only part of the area
     roundtrip_prob: float = 0.0            # fraction that are single-path courses (to the dead end and back)
     # Reward

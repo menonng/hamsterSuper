@@ -266,12 +266,13 @@ def generate_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
     block_of = lambda c: (c[0] // 2, c[1] // 2)
     shift = int(rng.integers(n_cells))
     order = order[shift:] + order[:shift]
-    if open_course:
-        cut = (order[-1], order[0])            # wall between the finish and the start
+    # one-way: the wall between the finish and the start; lap: the start/finish line.
+    # Neither block may be opened up, or the lap gets a shortcut across the line
+    cut = (order[-1], order[0])
     wide = []
     for b in nodes:
         if degree[b] == 1 and rng.random() < wide_prob:
-            if open_course and (block_of(cut[0]) == b or block_of(cut[1]) == b):
+            if block_of(cut[0]) == b or block_of(cut[1]) == b:
                 continue
             i, j = b
             cells = [(2 * i, 2 * j), (2 * i + 1, 2 * j), (2 * i + 1, 2 * j + 1), (2 * i, 2 * j + 1)]
