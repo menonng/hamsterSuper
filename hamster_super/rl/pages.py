@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import os
 import subprocess
 import threading
 import time
@@ -196,6 +197,11 @@ class PagesPublisher:
             res = _git("push", "-f", self.remote, f"{self.branch}:{self.branch}", cwd=self.wt, check=False)
             if res.returncode != 0:
                 raise RuntimeError(res.stderr.strip() or res.stdout.strip())
+            if os.environ.get("PAGES_DISPATCH"):
+                # in GitHub Actions a push made with the workflow token does not start
+                # other workflows; ask for the Pages deploy explicitly
+                subprocess.run(["gh", "workflow", "run", "pages.yml"], cwd=self.repo, check=False,
+                               capture_output=True, text=True)
             return pages_url(self.repo)
 
     def publish_async(self, make_episodes, iteration=None):

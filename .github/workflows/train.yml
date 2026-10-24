@@ -1,0 +1,90 @@
+# Continuous training on GitHub Actions.
+#
+# A Claude Code cloud session only runs while someone is working in it, so a
+# trainer started there stops whenever the session goes idle. This workflow
+# trains instead: each run restores the training state (checkpoint, logs) from
+# the `training-state` branch, trains for about 5.5 hours, saves the state back
+# and starts the next run. Releases (every 500 iterations), the fixed benchmark
+# and the Pages dashboard keep being published from here.
+#
+# Start / restart: Actions > Train > Run workflow. The schedule restarts it if
+# a run ever ends without starting the next one.
+name: Train
+
+on:
+  workflow_dispatch:
+    inputs:
+      extra_args:
+        description: "extra trainer arguments (e.g. --reopen-std 0.4 --renorm-count 1e5 after a rule change)"
+        required: false
+        default: ""
+  schedule:
+    - cron: "41 */6 * * *"
+
+permissions:
+  contents: write      # training-state branch, gh-pages, releases
+  actions: write       # start the Pages deploy and the next training run
+
+concurrency:
+  group: train
+  cancel-in-progress: false
+
+jobs:
+  train:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PAGES_DISPATCH: "1"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install numpy gymnasium opencv-python-headless
+
+      - name: Restore training state
+        run: |
+          git config user.name "hamster-trainer"
+          git config user.email "hamster-trainer@users.noreply.github.com"
+          mkdir -p runs/ci
+          if git fetch --depth 1 origin training-state; then
+            git archive FETCH_HEAD | tar -x -C runs/ci
+          fi
+          ls -la runs/ci
+
+      - name: Train (about 5.5 hours)
+        run: |
+          RESUME=""
+          if [ -f runs/ci/last.pt ]; then cp runs/ci/last.pt runs/ci/resume.pt; RESUME="--resume runs/ci/resume.pt"; fi
+          python -m hamster_super.rl.train --iters 1000000 --envs 32 --out runs/ci $RESUME \
+            --release-method gh --pages-every 50 --max-minutes 320 ${{ github.event.inputs.extra_args }}
+
+      - name: Save training state
+        if: always()
+        run: |
+          set -e
+          [ -f runs/ci/last.pt ] || exit 0
+          d="$(mktemp -d)"
+          for f in last.pt best.pt train_log.jsonl benchmark.jsonl env_config.json _pages_replays.json; do
+            [ -f "runs/ci/$f" ] && cp "runs/ci/$f" "$d/"
+          done
+          cd "$d"
+          git init -q
+          git checkout -q -b training-state
+          git add -A
+          git -c user.name=hamster-trainer -c user.email=hamster-trainer@users.noreply.github.com \
+            commit -q -m "Training state after run ${{ github.run_id }}"
+          git push -f "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" training-state
+
+      - name: Start the next run
+        if: success()
+        run: gh workflow run train.yml --ref "${{ github.ref_name }}"

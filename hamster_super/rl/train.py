@@ -179,6 +179,7 @@ class Trainer:
     # --------------------------------------------------------------- rollout
     def train(self):
         a, p = self.args, self.ppo
+        t_start = time.time()
         venv = VecEnv(self.cfg, p.n_envs, a.workers, seed=a.seed, level=self.cur.level)
         obs = venv.reset()
         N, T = p.n_envs, p.n_steps
@@ -251,6 +252,9 @@ class Trainer:
                     self._publish_pages()
                 if a.release_unit == "iter" and a.release_every > 0 and self.iter % a.release_every == 0:
                     self.release()
+                if a.max_minutes > 0 and (time.time() - t_start) / 60 > a.max_minutes:
+                    print(f"[train] {a.max_minutes} min wall time reached at iter {self.iter}: stopping", flush=True)
+                    break
         finally:
             venv.close()
             log_f.close()
@@ -412,6 +416,8 @@ def main():
     ap.add_argument("--renorm-count", type=float, default=0.0,
                     help="on --resume: cap the observation normalizer count so it adapts to new inputs quickly")
     ap.add_argument("--no-benchmark", action="store_true", help="skip the fixed benchmark at each release")
+    ap.add_argument("--max-minutes", type=float, default=0.0,
+                    help="stop (and save) after this much wall time, e.g. inside a CI job")
     ap.add_argument("--monitor", action="store_true", help="also start the live training dashboard")
     ap.add_argument("--monitor-port", type=int, default=8001)
     args = ap.parse_args()
