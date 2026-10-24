@@ -212,7 +212,8 @@ def _spanning_tree(m_, n_, rng, straight=0.65):
 
 
 def generate_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
-                    open_course: bool | None = None, wide_prob: float | None = None) -> GridMap:
+                    open_course: bool | None = None, wide_prob: float | None = None,
+                    wide_straight_prob: float = 0.5) -> GridMap:
     """Race course that uses *every* cell of an N x N area (N = 14 for races).
 
     * A spanning tree over all (N/2)^2 blocks of 2x2 cells is traced around:
@@ -221,8 +222,15 @@ def generate_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
       where the inside/outside line is a real choice.
     * open_course: cut the loop at one point -> start and finish are the two
       ends (one-way course); otherwise it is a circuit raced for one lap.
+    * wide_straight_prob: chance of a course with 2-cell-wide straights instead
+      (generate_wide_course).
     """
     level = int(np.clip(level, 0, COURSE_LEVELS - 1))
+    if wide_straight_prob > 0 and rng.random() < wide_straight_prob:
+        # half the courses: 2-cell-wide straights (falls back when no route fits)
+        m = generate_wide_course(rng, level, open_course=open_course)
+        if m is not None:
+            return m
     size = COURSE_SIZES[level]
     m_ = n_ = size // 2
     # every map draws its own character: twisty (low) ... long straights (high)
@@ -279,6 +287,204 @@ def generate_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
     d0 = (order[1][0] - order[0][0], order[1][1] - order[0][1])
     m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]
     m.goal = order[-1]                          # finish cell (one-way) / last cell before the line (lap)
+    m.bounds = (0, 0, size - 1, size - 1)
+    return m
+
+
+def _block_route(m_: int, n_: int, rng, closed: bool, straight: float = 0.6, tries: int = 200):
+    """Random Hamiltonian path (or cycle) over an m_ x n_ grid of blocks:
+    randomized depth-first search with Warnsdorff ordering and a bias to keep
+    going straight (long straights). None if none was found."""
+    N = m_ * n_
+    dirs = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+    inb = lambda b: 0 <= b[0] < m_ and 0 <= b[1] < n_
+    for _ in range(tries):
+        start = (int(rng.integers(m_)), int(rng.integers(n_))) if not closed else (0, 0)
+        path, seen = [start], {start}
+        budget = [20000]
+
+        def free_deg(b):
+            return sum(1 for d in dirs if inb((b[0] + d[0], b[1] + d[1])) and (b[0] + d[0], b[1] + d[1]) not in seen)
+
+        def dfs():
+            budget[0] -= 1
+            if budget[0] < 0:
+                return False
+            if len(path) == N:
+                if not closed:
+                    return True
+                a, b = path[-1], path[0]
+                return abs(a[0] - b[0]) + abs(a[1] - b[1]) == 1
+            cur = path[-1]
+            prev_d = (cur[0] - path[-2][0], cur[1] - path[-2][1]) if len(path) > 1 else None
+            cand = [(cur[0] + d[0], cur[1] + d[1]) for d in dirs]
+            cand = [c for c in cand if inb(c) and c not in seen]
+            keys = []
+            for c in cand:
+                d = (c[0] - cur[0], c[1] - cur[1])
+                k = free_deg(c) + rng.random() * 1.5
+                if d == prev_d and rng.random() < straight:
+                    k -= 2.0
+                keys.append(k)
+            for _, c in sorted(zip(keys, cand)):
+                path.append(c)
+                seen.add(c)
+                if dfs():
+                    return True
+                path.pop()
+                seen.discard(c)
+            return False
+
+        if dfs():
+            return path
+    return None
+
+
+def _narrow_path(entry, exit_dir):
+    """1-cell lane through the 4 cells of a block (local coords 0/1), starting at
+    `entry` and ending on the block side `exit_dir` points to."""
+    e = entry
+    for nb in ((1 - e[0], e[1]), (e[0], 1 - e[1])):
+        path = [e, nb, (1 - e[0], 1 - e[1]), None]
+        # the 4th cell is the one not used yet
+        used = {e, nb, (1 - e[0], 1 - e[1])}
+        last = [c for c in ((0, 0), (1, 0), (0, 1), (1, 1)) if c not in used][0]
+        path[3] = last
+        # side test: exit_dir (dx, dy) -> the last cell must lie on that side
+        if (exit_dir[0] == 1 and last[0] == 1) or (exit_dir[0] == -1 and last[0] == 0) or \
+                (exit_dir[1] == 1 and last[1] == 1) or (exit_dir[1] == -1 and last[1] == 0):
+            return path
+    return None
+
+
+def generate_wide_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 1,
+                         open_course: bool | None = None, wide_prob: float | None = None) -> GridMap | None:
+    """Race course with 2-cell-wide straights. The arena is split into 2x2
+    blocks and a random route visits every block once. A block is either
+    *wide* (the lane is 2 cells wide there: all 4 cells open) or *narrow*
+    (a 1-cell lane winds through its 4 cells). Whole straight runs of blocks
+    are made wide together, so the course has wide straights that narrow down
+    again. Every cell of the N x N area is used. Returns None if no route
+    (a closed route needs an even number of blocks)."""
+    level = int(np.clip(level, 0, COURSE_LEVELS - 1))
+    size = COURSE_SIZES[level]
+    M = size // 2
+    open_course = bool(rng.random() < 0.5) if open_course is None else open_course
+    if not open_course and (M * M) % 2:
+        return None
+    straight = float(rng.uniform(0.3, 0.9))
+    route = _block_route(M, M, rng, closed=not open_course, straight=straight)
+    if route is None:
+        return None
+    nb = len(route)
+    wide_prob = rng.uniform(0.3, 0.7) if wide_prob is None else wide_prob
+    # straight runs: consecutive blocks entered and left in the same direction
+    d_in = [None] + [(route[k][0] - route[k - 1][0], route[k][1] - route[k - 1][1]) for k in range(1, nb)]
+    if not open_course:
+        d_in[0] = (route[0][0] - route[-1][0], route[0][1] - route[-1][1])
+    d_out = [(route[k + 1][0] - route[k][0], route[k + 1][1] - route[k][1]) for k in range(nb - 1)] + [None]
+    if not open_course:
+        d_out[-1] = (route[0][0] - route[-1][0], route[0][1] - route[-1][1])
+    wide = [False] * nb
+    k = 0
+    while k < nb:
+        j = k
+        while j + 1 < nb and d_out[j] is not None and d_out[j] == d_out[j + 1]:
+            j += 1
+        run = list(range(k, j + 2 if j + 1 < nb and d_out[j] is not None and j > k else j + 1))
+        if len(run) >= 2 and rng.random() < wide_prob:
+            for r in run:
+                wide[r] = True
+        k = j + 1
+    for r in range(nb):                       # a few wide corners too
+        if rng.random() < 0.15 * wide_prob:
+            wide[r] = True
+    wide[0] = False                           # the start is in a 1-cell lane
+    if open_course:
+        wide[-1] = False                      # ... and a one-way finish is a dead end
+    else:
+        wide[-1] = True                       # the closing block must be able to meet the start
+    walls = set()
+    for i in range(size):
+        for j in range(size):
+            for dx, dy in NEIGHBORS:
+                walls.add(edge_between((i, j), (i + dx, j + dy)))
+    cell = lambda b, l: (2 * b[0] + l[0], 2 * b[1] + l[1])
+    order = []
+    # entry cell of the first block: a corner whose lane can leave toward the next block
+    entry = None
+    for e in ((0, 0), (1, 0), (0, 1), (1, 1)):
+        if _narrow_path(e, d_out[0]) is not None:
+            if d_in[0] is None or (d_in[0][0] == 1 and e[0] == 0) or (d_in[0][0] == -1 and e[0] == 1) or \
+                    (d_in[0][1] == 1 and e[1] == 0) or (d_in[0][1] == -1 and e[1] == 1) or open_course:
+                entry = e
+                break
+    if entry is None:
+        return None
+    first_entry = entry
+    for k, b in enumerate(route):
+        out = d_out[k]
+        if not wide[k]:
+            if out is None:                   # one-way finish block: any lane through the 4 cells
+                lp = _narrow_path(entry, (0, 1)) or _narrow_path(entry, (0, -1)) or \
+                    _narrow_path(entry, (1, 0)) or _narrow_path(entry, (-1, 0))
+            else:
+                lp = _narrow_path(entry, out)
+            if lp is None:
+                return None
+            cells = [cell(b, l) for l in lp]
+            for a, c in zip(cells, cells[1:]):
+                walls.discard(edge_between(a, c))
+            order += cells
+            if out is None:
+                break
+            ex = lp[-1]
+            nxt_entry = ((ex[0] + out[0]) % 2, (ex[1] + out[1]) % 2)     # the cell across the boundary
+            walls.discard(edge_between(cell(b, ex), cell(route[(k + 1) % nb], nxt_entry)))
+            entry = nxt_entry
+        else:
+            quad = [(0, 0), (1, 0), (1, 1), (0, 1)]
+            for a, c in zip(quad, quad[1:] + quad[:1]):
+                walls.discard(edge_between(cell(b, a), cell(b, c)))
+            # sweep order (for lap progress): entry side first
+            o = out or (0, 0)
+            order += sorted((cell(b, l) for l in quad), key=lambda c: (c[0] - 2 * b[0]) * o[0] + (c[1] - 2 * b[1]) * o[1])
+            if out is None:
+                break
+            nxt = route[(k + 1) % nb]
+            # the two cells of this block on the side facing the next block
+            side = [l for l in quad if (out[0] == 1 and l[0] == 1) or (out[0] == -1 and l[0] == 0)
+                    or (out[1] == 1 and l[1] == 1) or (out[1] == -1 and l[1] == 0)]
+            nwide = wide[(k + 1) % nb] and not (k + 1 == nb)
+            if k + 1 == nb:                   # closing a loop: only into the start cell
+                ins = [l for l in side if ((l[0] + out[0]) % 2, (l[1] + out[1]) % 2) == first_entry]
+                if not ins:
+                    return None
+                walls.discard(edge_between(cell(b, ins[0]), cell(nxt, first_entry)))
+            elif nwide:                       # wide into wide: the whole 2-cell width is open
+                for l in side:
+                    walls.discard(edge_between(cell(b, l), cell(nxt, ((l[0] + out[0]) % 2, (l[1] + out[1]) % 2))))
+            else:                             # wide into narrow: one of the two cells
+                l = side[int(rng.integers(2))]
+                entry = ((l[0] + out[0]) % 2, (l[1] + out[1]) % 2)
+                if _narrow_path(entry, d_out[k + 1] or (0, 1)) is None and d_out[k + 1] is not None:
+                    l = side[0] if l == side[1] else side[1]
+                    entry = ((l[0] + out[0]) % 2, (l[1] + out[1]) % 2)
+                walls.discard(edge_between(cell(b, l), cell(nxt, entry)))
+    if not open_course and len(order) != size * size:
+        return None
+    nwide = sum(wide)
+    kind = "oneway" if open_course else "lap"
+    m = GridMap(walls=walls, name=f"course-{size}x{size}-{kind}-wide-straights{nwide}-s{straight:.2f}", kind=kind)
+    m.course = order
+    m.start = order[0]
+    d0 = (order[1][0] - order[0][0], order[1][1] - order[0][1])
+    m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]
+    if open_course:
+        m.goal = order[-1]
+    else:
+        # last cell before the line: the closing block's cell next to the start
+        m.goal = [c for c in order[-4:] if abs(c[0] - m.start[0]) + abs(c[1] - m.start[1]) == 1][0]
     m.bounds = (0, 0, size - 1, size - 1)
     return m
 

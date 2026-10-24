@@ -45,3 +45,32 @@ def test_generated_maps_are_solvable(level):
         m = generate(rng, level)
         assert m.shortest_path() is not None
         assert m.start != m.goal
+
+
+def test_wide_straight_courses():
+    """Courses with 2-cell-wide straights: every cell used, the finish (one-way)
+    or the whole lap reachable, and real 2-wide straight runs present."""
+    from hamster_super.maps.generator import generate_wide_course
+    from hamster_super.maps.grid_map import edge_between
+    made = 0
+    for k in range(20):
+        for open_course in (True, False):
+            m = generate_wide_course(np.random.default_rng(k), 4, open_course=open_course)
+            if m is None:
+                continue
+            made += 1
+            n = m.bounds[2] + 1
+            assert len(set(m.course)) == n * n
+            assert m.shortest_path()
+            # a 2-wide straight: two side-by-side cells open to each other and to the
+            # next pair along the run, for at least 2 steps
+            def wide_at(i, j):
+                return all(edge_between(a, b) not in m.walls for a, b in
+                           [((i, j), (i, j + 1)), ((i + 1, j), (i + 1, j + 1)), ((i, j), (i + 1, j)),
+                            ((i, j + 1), (i + 1, j + 1)), ((i + 1, j), (i + 2, j)), ((i + 1, j + 1), (i + 2, j + 1))])
+            def wide_v(i, j):
+                return all(edge_between(a, b) not in m.walls for a, b in
+                           [((i, j), (i + 1, j)), ((i, j + 1), (i + 1, j + 1)), ((i, j), (i, j + 1)),
+                            ((i + 1, j), (i + 1, j + 1)), ((i, j + 1), (i, j + 2)), ((i + 1, j + 1), (i + 1, j + 2))])
+            assert any(wide_at(i, j) or wide_v(i, j) for i in range(n - 2) for j in range(n - 2)), m.name
+    assert made >= 20
