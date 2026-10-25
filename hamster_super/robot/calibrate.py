@@ -144,7 +144,7 @@ def main():
             while True:
                 print(f"\rL {h.left_proximity():3d}  R {h.right_proximity():3d}", end="", flush=True)
                 time.sleep(0.1)
-        cmd = int(args.cmd * 100)
+        cmd = int(round(args.cmd * 100))          # hamster.wheels(): % of the maximum speed, -100 ... 100
         if args.what == "speed":
             input(f"Robot will drive straight at {cmd} for {args.seconds}s. Enter to start...")
             h.wheels(cmd, cmd)

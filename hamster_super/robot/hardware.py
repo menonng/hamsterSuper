@@ -73,7 +73,10 @@ class HamsterHardware:
         return self.camera.read(), None, ir
 
     def set_wheels(self, left: float, right: float):
-        self.h.wheels(int(np.clip(left, -1, 1) * 100), int(np.clip(right, -1, 1) * 100))
+        # Robomation API: hamster.wheels(left, right) takes -100 ... 100, the percentage
+        # of the maximum wheel speed; the policy's [-1, 1] maps onto it directly
+        # (1.0 = 100 % = top speed, measured 10 cm/s and set by `calibrate speed`)
+        self.h.wheels(int(round(float(np.clip(left, -1, 1)) * 100)), int(round(float(np.clip(right, -1, 1)) * 100)))
 
     def led(self, color: str):
         try:
