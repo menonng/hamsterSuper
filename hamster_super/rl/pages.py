@@ -61,7 +61,8 @@ def record_episode(policy, cfg, level: int, seed: int, model_iter=None, full_sta
         pose, est = env.robot.pose, np.asarray(env.est)
         frames.append({"p": [round(float(pose[0]), 2), round(float(pose[1]), 2), round(float(pose[2]), 3)],
                        "e": [round(float(est[0]), 2), round(float(est[1]), 2), round(float(est[2]), 3)],
-                       "r": r1(env.last_rays), "c": path, "k": env.collisions, **line_info(env.line)})
+                       "r": r1(env.last_rays), "c": path, "k": env.collisions, **line_info(env.line),
+                       **({"d": [r1(b) for b in env.dyn_boxes]} if len(env.dyn_boxes) else {})})
         t += 1
     return {
         "model_iter": model_iter, "level": level, "map_name": m.name, "bounds": list(env.bounds),

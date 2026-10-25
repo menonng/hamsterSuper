@@ -32,6 +32,13 @@ class BeliefMap:
         self.free_threshold = -1.0
         self.seen: set = set()          # cells whose floor the camera has looked at
         self.decay = 1.0                # < 1: forget old evidence (local map for racing)
+        self.clear_gain = 0.3           # extra clearing per unit of wall evidence when seen through
+        # cells with something off the lattice in them (a swinging wall, a sliding
+        # block): blocked for the planner for a few seconds after the last sighting
+        self.blocked: dict = {}
+        self.block_steps = 30
+        self.block_range = 15.0
+        self.t = 0
         self._free_cache, self._free_version = None, -1
         self.version = 0
         self._arrays, self._arrays_version = None, -1
@@ -47,7 +54,11 @@ class BeliefMap:
     @property
     def walls(self) -> set:
         if self._cache is None:
-            self._cache = self.fixed | {e for e, s in self.scores.items() if s >= self.threshold}
+            w = self.fixed | {e for e, s in self.scores.items() if s >= self.threshold}
+            for (i, j) in self.blocked:      # something off the lattice stands in this cell
+                w |= {make_edge((i, j), (i + 1, j)), make_edge((i, j + 1), (i + 1, j + 1)),
+                      make_edge((i, j), (i, j + 1)), make_edge((i + 1, j), (i + 1, j + 1))}
+            self._cache = w
         return self._cache
 
     def strong_walls(self, min_score: float = 4.0) -> set:
@@ -111,7 +122,10 @@ class BeliefMap:
 
     def update(self, origin, heading: float, angles, ranges, max_range: float, r_min):
         self.forget()
+        self.t += 1
         ox, oy = float(origin[0]), float(origin[1])
+        own = (int(math.floor(ox / G)), int(math.floor(oy / G)))
+        inner = {}
         for a, r, rmin in zip(angles, ranges, r_min):
             dx, dy = math.cos(heading + a), math.sin(heading + a)
             hit = (r < self.map_range) and (r > rmin + 0.3)
@@ -127,6 +141,24 @@ class BeliefMap:
                 e = self.snap(ox + dx * d, oy + dy * d)
                 if e is not None:
                     self._add(e, self.hit_gain)
+                elif r < self.block_range:      # near only: far ranges bend with a tilt error
+                    px, py = ox + dx * (r + 0.3), oy + dy * (r + 0.3)
+                    fx, fy = px / G - math.floor(px / G), py / G - math.floor(py / G)
+                    if 0.2 < fx < 0.8 and 0.2 < fy < 0.8:       # well inside a cell, not on a wall line
+                        c = (int(math.floor(px / G)), int(math.floor(py / G)))
+                        inner[c] = inner.get(c, 0) + 1
+        changed = False
+        for c, k in inner.items():
+            x0, y0, x1, y1 = self.bounds
+            if k >= 2 and c != own and x0 <= c[0] <= x1 and y0 <= c[1] <= y1:   # two rays agree: not noise
+                changed |= c not in self.blocked
+                self.blocked[c] = self.t + self.block_steps
+        for c in [c for c, until in self.blocked.items() if until < self.t or c == own]:
+            del self.blocked[c]
+            changed = True
+        if changed:
+            self._cache = None
+            self.version += 1
 
     def update_ir(self, pose, ir, spec):
         """IR proximity hits: covers the camera's blind zone right in front."""
@@ -196,7 +228,9 @@ class BeliefMap:
                     continue
                 m = int(math.floor(q / G))
                 edge = ((k, m), (k, m + 1)) if vertical else ((m, k), (m + 1, k))
-                self._add(edge, -self.miss_gain)
+                # seeing through a mapped wall removes it quickly (walls can move):
+                # the stronger the old evidence, the bigger the step
+                self._add(edge, -(self.miss_gain + self.clear_gain * max(self.scores.get(edge, 0.0), 0.0)))
 
     def add_border(self):
         """Races use the whole arena: its outer boundary is a known wall. Fixed

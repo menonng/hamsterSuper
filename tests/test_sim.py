@@ -178,3 +178,75 @@ def test_rewards_favour_backing_off_a_wall():
         assert rewards[5] < rewards[1]                       # escalating
         _, r_back, _, _, _ = env.step((-1.0, -1.0, 0.0))
         assert env.t - env.last_hit_t <= env.cfg.reverse_free_steps
+
+
+def test_moving_course_parts_never_close_the_course_or_hit_the_robot():
+    from collections import deque
+    from hamster_super.maps.generator import generate_wide_course
+    from hamster_super.maps.grid_map import NEIGHBORS, edge_between
+    from hamster_super.sim.dynamics import RotatingWall, SlidingBlock, make_dynamics
+    G = 9.0
+    for k in range(6):
+        m = None
+        s = k
+        while m is None:
+            m = generate_wide_course(np.random.default_rng(s), 5, open_course=True)
+            s += 100
+        dyn = make_dynamics(m, np.random.default_rng(k))
+        assert dyn.elements
+        for t in range(400):                       # 40 s of motion, robot far away
+            dyn.step(0.1)
+            if t % 20:
+                continue
+            walls, closed = set(m.walls), set()
+            for e in dyn.elements:
+                if isinstance(e, RotatingWall):
+                    c, s_ = math.cos(e.ang), math.sin(e.ang)
+                    if abs(c) < 1e-6 or abs(s_) < 1e-6:          # at rest on the lattice
+                        a = (round(e.pivot[0] / G), round(e.pivot[1] / G))
+                        b = (a[0] + round(c), a[1] + round(s_))
+                        walls.add(tuple(sorted((a, b))))
+                    else:                                       # swinging: its quadrant cell is blocked
+                        closed.add((int((e.pivot[0] + 4.5 * c) // G), int((e.pivot[1] + 4.5 * s_) // G)))
+                else:
+                    closed.add((int(e.pos[0] // G), int(e.pos[1] // G)))
+            seen, q = {m.start}, deque([m.start])
+            while q:
+                c = q.popleft()
+                for dx, dy in NEIGHBORS:
+                    n = (c[0] + dx, c[1] + dy)
+                    if n not in seen and n not in closed and 0 <= n[0] < 14 and 0 <= n[1] < 14 \
+                            and edge_between(c, n) not in walls:
+                        seen.add(n)
+                        q.append(n)
+            assert m.goal in seen, (m.name, t)
+
+
+def test_robot_never_inside_moving_parts():
+    from hamster_super.config import DomainRandomization
+    cfg = EnvConfig(dynamic_prob=1.0, dr=DomainRandomization(enabled=False))
+    env = HamsterMazeEnv(cfg, level=5, seed=3)
+    rng = np.random.default_rng(0)
+    spec = RobotSpec()
+    worst = 0.0
+    for _ in range(3):
+        env.reset(options={"level": 5})
+        for _ in range(400):
+            _, _, te, tr, _ = env.step(rng.uniform(-1, 1, 3))
+            worst = max(worst, rect_penetration(env.robot.pose[:2], env.robot.th, spec.body_length / 2,
+                                                spec.body_width / 2, env.boxes)[0])
+            if te or tr:
+                break
+    assert worst < 0.05
+
+
+def test_swinging_wall_waits_for_the_robot():
+    from hamster_super.sim.dynamics import RotatingWall
+    w = RotatingWall((18.0, 18.0), 0.0, -math.pi / 2, np.random.default_rng(0), rest=(0.1, 0.1))
+    w.ang = w.target = 0.0
+    robot = (22.5, 13.5, 0.0)            # in the quadrant the wall sweeps through
+    spec = RobotSpec()
+    for _ in range(50):
+        w.step(0.1, robot, (spec.body_length / 2, spec.body_width / 2))
+        assert rect_penetration(np.array(robot[:2]), 0.0, spec.body_length / 2, spec.body_width / 2, w.boxes())[0] == 0
+    assert w.ang > -math.pi / 2 + 0.1    # it could not finish the swing

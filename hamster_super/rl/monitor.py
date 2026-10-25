@@ -144,6 +144,7 @@ class Replay:
                     "trail": trail, "est_trail": est_trail, "path": path,
                     **line_info(env.line),
                     "rays": np.asarray(env.last_rays).tolist(),
+                    "dyn": np.round(env.dyn_boxes, 1).tolist(),
                     "ray_angles": env.cfg.camera.ray_angles().tolist(),
                     "cam_forward": env.cfg.camera.mount_forward,
                     "cam": camera_info(env.cfg),

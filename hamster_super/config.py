@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Simulator rules version. Bump it whenever the physics, sensors, judging or the
 # meaning of an action changes: benchmark scores are only comparable within one version.
-ENV_VERSION = "2026.10.25-1"            # -2: walls only block; -3: camera-motion obs; 10.25-1: reverse-out rewards
+ENV_VERSION = "2026.10.25-2"            # 10.25-1: reverse-out rewards; -2: moving course parts, per-ray motion obs
 
 # ---- Map (measured values) ----
 GRID_SPACING = 9.0       # cm, spacing between floor dots
@@ -98,10 +98,11 @@ class EnvConfig:
     steps_per_cell: int = 40               # timeout = steps_per_cell * shortest path cells + 100
     known_map: bool = False                # True: the planner knows the full map in advance
     full_stack_prob: float = 0.0           # fraction of episodes using odometry + particle filter
-    race_map_decay: float = 1.0            # per-step forgetting of the wall map while racing (1 = keep; the border anchors it)
-    race_min_coverage: float = 0.85        # share of arena cells to visit before a finish is believed
+    race_map_decay: float = 0.9988         # per-step forgetting of the wall map while racing (half-life ~1 min: parts move)
+    race_min_coverage: float = 0.85        # share of the 2x2 blocks to visit before a finish is believed
     race_border: bool = True               # the arena boundary is a known wall (courses use every cell)
     race_recent_steps: int = 0             # cells visited within this many steps count as driven
+    dynamic_prob: float = 0.5              # runs with moving course parts (rotating walls, sliding blocks)
     course_prob: float = 1.0               # race courses filling the whole N x N area (lap or one-way, wide parts)
     lap_prob: float = 0.0                  # older closed circuits that use only part of the area
     roundtrip_prob: float = 0.0            # fraction that are single-path courses (to the dead end and back)

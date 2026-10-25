@@ -25,7 +25,7 @@ from ..maps.generator import COURSE_LEVELS, generate_course, generate_wide_cours
 
 # (name, level, map seed, style, one-way?) - never change existing entries;
 # append new ones and bump BENCH_VERSION instead
-BENCH_VERSION = 2          # 2: lap courses never widen the blocks at the start/finish line
+BENCH_VERSION = 3          # 2: no widened blocks at the lap line; 3: courses with moving parts
 REPEATS = 3          # each course driven with 3 fixed disturbance seeds
 SPECS = (
     [(f"race-hairpin-oneway-{i}", COURSE_LEVELS - 1, 1000 + i, "hairpin", True) for i in range(4)]
@@ -33,13 +33,14 @@ SPECS = (
     + [(f"race-wide-oneway-{i}", COURSE_LEVELS - 1, 3000 + i, "wide", True) for i in range(4)]
     + [(f"mid-wide-lap-{i}", 4, 4000 + i, "wide", False) for i in range(2)]
     + [(f"small-hairpin-{i}", 2, 5000 + i, "hairpin", bool(i % 2)) for i in range(2)]
+    + [(f"race-moving-oneway-{i}", COURSE_LEVELS - 1, 6000 + i, "wide-moving", True) for i in range(3)]
 )
 
 
 def make_map(level: int, seed: int, style: str, one_way: bool):
     for k in range(50):                      # a wide route may not fit a seed: try the next one
         rng = np.random.default_rng(seed + 100000 * k)
-        if style == "wide":
+        if style.startswith("wide"):
             m = generate_wide_course(rng, level, open_course=one_way)
         else:
             m = generate_course(rng, level, open_course=one_way, wide_straight_prob=0.0)
@@ -58,7 +59,7 @@ def _run(args):
     pol = load_policy(ckpt)
     env = HamsterMazeEnv(EnvConfig(), level=level, seed=10_000 + 10 * i + rep)
     m = make_map(level, seed, style, one_way)
-    obs, _ = env.reset(options={"map": m})
+    obs, _ = env.reset(options={"map": m, "dynamic": style.endswith("moving")})
     done = False
     while not done:
         with torch.no_grad():

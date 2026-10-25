@@ -23,18 +23,22 @@ WP_CLIP = 3.0
 
 
 def obs_dim(cfg: EnvConfig) -> int:
-    return cfg.camera.n_rays + 2 + 4 + 2 + 2
+    return cfg.camera.n_rays + 2 + 4 + 2 + 2 + cfg.camera.n_rays
 
 
 def motion_features(rays, prev_rays) -> np.ndarray:
     """How the camera picture moved since the last frame: mean change of the
-    ray distances (cm, negative = walls coming closer) and its mean size.
-    Driving forward with both near zero means the robot is blocked by a wall;
-    the same numbers come from the real camera every frame."""
+    ray distances (cm, negative = walls coming closer), its mean size, and the
+    change of every ray. Driving forward with all of it near zero means the
+    robot is blocked; a few rays changing while the rest stand still is
+    something moving in front of it (a swinging wall, a sliding block). The
+    real camera gives the same numbers every frame."""
+    n = len(rays)
     if prev_rays is None:
-        return np.zeros(2, np.float32)
+        return np.zeros(2 + n, np.float32)
     d = np.asarray(rays, float) - np.asarray(prev_rays, float)
-    return np.array([np.clip(d.mean() / 2.0, -3, 3), np.clip(np.abs(d).mean() / 2.0, 0, 3)], np.float32)
+    return np.concatenate([[np.clip(d.mean() / 2.0, -3, 3), np.clip(np.abs(d).mean() / 2.0, 0, 3)],
+                           np.clip(d / 2.0, -3, 3)]).astype(np.float32)
 
 
 def to_local(pose, pt) -> np.ndarray:
@@ -86,7 +90,7 @@ class NavStack:
             self.roundtrip.recent_window = cfg.race_recent_steps
             x0, y0, x1, y1 = bounds
             self.roundtrip.min_lap_cells = max(4, int(0.6 * (x1 - x0 + 1) * (y1 - y0 + 1)))   # courses fill the arena
-            self.roundtrip.min_coverage = int(cfg.race_min_coverage * (x1 - x0 + 1) * (y1 - y0 + 1))
+            self.roundtrip.min_coverage = cfg.race_min_coverage
         self.odom = Odometry(cfg.robot, start_pose, delay_steps=delay_steps)
         # the command-to-motion latency is not known exactly (camera, Bluetooth):
         # motion increments for 0, 1 and 2 steps of delay; each particle picks one

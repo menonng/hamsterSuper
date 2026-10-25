@@ -46,7 +46,7 @@ class RoundTrip:
         self.min_lap_cells = 4                     # no finish (lap or dead end) before this many cells
         # races use every cell of the arena: a finish is only believed after the robot
         # has driven through most of it (a drifted pose cannot fake an early finish)
-        self.min_coverage = 0
+        self.min_coverage = 0.0                    # share of 2x2 blocks to visit before a finish counts
         self.prev_cell = self.start
         self.ahead = None
         if start_heading is not None:
@@ -153,20 +153,18 @@ class RoundTrip:
         return target
 
     def covered(self, walls) -> bool:
-        """Has the robot been through (nearly) the whole arena? Cells driven into
-        count, and cells of a wide section it drove past (an open 2x2 square)."""
+        """Has the robot been through (nearly) the whole arena? Counted in 2x2
+        blocks: a block counts once the robot has been in one of its cells, so
+        a wide section crossed on one side (or split by a moving wall) still
+        counts. min_coverage is the share of blocks needed (0 = off)."""
         if len(self.visited) < 4:
             return False
-        if self.min_coverage <= 0 or len(self.visited) >= self.min_coverage:
+        if self.min_coverage <= 0:
             return True
-        need = self.min_coverage - len(self.visited)
-        extra = 0
-        for c in self.seen:
-            if c not in self.visited and self.in_bounds(c) and self._passed_by(c, walls):
-                extra += 1
-                if extra >= need:
-                    return True
-        return False
+        x0, y0, x1, y1 = self.bounds
+        total = ((x1 - x0) // 2 + 1) * ((y1 - y0) // 2 + 1)
+        blocks = {((c[0] - x0) // 2, (c[1] - y0) // 2) for c in self.visited}
+        return len(blocks) >= self.min_coverage * total
 
     def _passed_by(self, c, walls) -> bool:
         """In a wide section the robot drives past cells without entering them.

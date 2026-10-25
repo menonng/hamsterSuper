@@ -478,6 +478,10 @@ def generate_wide_course(rng: np.random.Generator, level: int = COURSE_LEVELS - 
     kind = "oneway" if open_course else "lap"
     m = GridMap(walls=walls, name=f"course-{size}x{size}-{kind}-wide-straights{nwide}-s{straight:.2f}", kind=kind)
     m.course = order
+    # wide blocks inside a wide straight (wide before and after, same direction):
+    # moving course parts go there, where one half of the width always stays open
+    m.wide_blocks = [(route[k], d_out[k]) for k in range(1, nb - 1)
+                     if wide[k - 1] and wide[k] and wide[k + 1] and d_in[k] == d_out[k] == d_out[k - 1]]
     m.start = order[0]
     d0 = (order[1][0] - order[0][0], order[1][1] - order[0][1])
     m.start_heading = {(1, 0): 0.0, (0, 1): math.pi / 2, (-1, 0): math.pi, (0, -1): -math.pi / 2}[d0]

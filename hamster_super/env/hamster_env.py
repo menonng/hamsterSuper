@@ -15,6 +15,7 @@ from ..nav.planner import Planner
 from ..nav.racing_line import RacingLine
 from ..nav.roundtrip import DONE, RoundTrip
 from ..nav.stack import NavStack, build_obs, cam_origin, front_distance, obs_dim
+from ..sim.dynamics import CourseDynamics, make_dynamics
 from ..sim.robot import SimRobot, wrap
 from ..sim.sensors import DepthRays
 
@@ -64,7 +65,12 @@ class HamsterMazeEnv(gym.Env):
             else:
                 self.map = generate(self.rng, self.cur_level)
         m = self.map
-        self.boxes = m.wall_boxes()
+        self.static_boxes = m.wall_boxes()
+        dyn = options.get("dynamic")
+        if dyn is None:
+            dyn = self.rng.random() < self.cfg.dynamic_prob
+        self.dynamics = make_dynamics(m, self.rng) if dyn else CourseDynamics()
+        self._update_boxes()
         self.bounds = m.cell_bounds()
         heading = m.start_heading
         if heading is None:
@@ -129,7 +135,7 @@ class HamsterMazeEnv(gym.Env):
             self.rt.recent_window = self.cfg.race_recent_steps
             x0, y0, x1, y1 = self.bounds
             self.rt.min_lap_cells = max(4, int(0.6 * (x1 - x0 + 1) * (y1 - y0 + 1)))   # courses fill the arena
-            self.rt.min_coverage = int(self.cfg.race_min_coverage * (x1 - x0 + 1) * (y1 - y0 + 1))
+            self.rt.min_coverage = self.cfg.race_min_coverage
         self.line = RacingLine(robot_radius=self.cfg.robot.collision_radius)
         self.use_stack = self.full_stack or (self.rng.random() < self.cfg.full_stack_prob)
         if self.use_stack:
@@ -140,6 +146,10 @@ class HamsterMazeEnv(gym.Env):
         obs = self._observe()
         self.prev_pose = self.robot.pose
         return obs, {}
+
+    def _update_boxes(self):
+        self.dyn_boxes = self.dynamics.boxes()
+        self.boxes = np.concatenate([self.static_boxes, self.dyn_boxes]) if len(self.dyn_boxes) else self.static_boxes
 
     def _calibrated_spec(self):
         """Odometry parameters as a user would measure them with the
@@ -206,6 +216,10 @@ class HamsterMazeEnv(gym.Env):
         a = np.clip(np.asarray(action, dtype=np.float64), -1, 1)
         if a.shape[0] < 3:
             a = np.concatenate([a, np.zeros(3 - a.shape[0])])
+        if self.dynamics:      # moving course parts (they wait instead of pushing the robot)
+            r = cfg.robot
+            self.dynamics.step(cfg.dt, self.robot.pose, (r.body_length / 2, r.body_width / 2))
+            self._update_boxes()
         hit = self.robot.step(a[:2], cfg.dt, cfg.substeps, self.boxes)
         self.t += 1
         self.collisions += int(hit)
