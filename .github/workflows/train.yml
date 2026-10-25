@@ -8,7 +8,10 @@
 # and the Pages dashboard keep being published from here.
 #
 # Start / restart: Actions > Train > Run workflow. The schedule restarts it if
-# a run ever ends without starting the next one.
+# a run ever ends without starting the next one. Full reset: delete the
+# training-state branch; the next run starts from scratch at the first level.
+# Releases of this training are tagged model-r2-iterNNNNNN (r2 = the restart
+# of 2026-10-25; the older model-iterNNNNNN releases are the previous run).
 name: Train
 
 on:
@@ -66,7 +69,7 @@ jobs:
           RESUME=""
           if [ -f runs/ci/last.pt ]; then cp runs/ci/last.pt runs/ci/resume.pt; RESUME="--resume runs/ci/resume.pt"; fi
           python -m hamster_super.rl.train --iters 1000000 --envs 32 --out runs/ci $RESUME \
-            --release-method gh --pages-every 50 --max-minutes 320 ${{ github.event.inputs.extra_args }}
+            --release-method gh --tag-prefix model-r2 --pages-every 50 --max-minutes 320 ${{ github.event.inputs.extra_args }}
 
       - name: Save training state
         if: always()
