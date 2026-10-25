@@ -336,7 +336,9 @@ class Trainer:
             if np.mean(kls[-p.minibatches:]) > p.target_kl:
                 break
         with torch.no_grad():
-            self.ac.log_std.clamp_(-2.5, 0.5)
+            # an exploration floor: with too little noise the policy stops trying
+            # new behaviour (e.g. reversing out of a wall) and learning stalls
+            self.ac.log_std.clamp_(float(np.log(max(self.args.min_std, 0.08))), 0.5)
         return {"pi_loss": float(np.mean(pls)), "v_loss": float(np.mean(vls)), "entropy": float(np.mean(ents)),
                 "kl": float(np.mean(kls)), "std": float(self.ac.log_std.exp().mean())}
 
@@ -416,6 +418,8 @@ def main():
     ap.add_argument("--renorm-count", type=float, default=0.0,
                     help="on --resume: cap the observation normalizer count so it adapts to new inputs quickly")
     ap.add_argument("--no-benchmark", action="store_true", help="skip the fixed benchmark at each release")
+    ap.add_argument("--min-std", type=float, default=0.2,
+                    help="lower bound of the policy's exploration noise during training")
     ap.add_argument("--max-minutes", type=float, default=0.0,
                     help="stop (and save) after this much wall time, e.g. inside a CI job")
     ap.add_argument("--monitor", action="store_true", help="also start the live training dashboard")
