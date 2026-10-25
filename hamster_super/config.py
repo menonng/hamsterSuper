@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Simulator rules version. Bump it whenever the physics, sensors, judging or the
 # meaning of an action changes: benchmark scores are only comparable within one version.
-ENV_VERSION = "2026.10.24-3"            # -2: walls only block motion; -3: camera-motion observation
+ENV_VERSION = "2026.10.25-1"            # -2: walls only block; -3: camera-motion obs; 10.25-1: reverse-out rewards
 
 # ---- Map (measured values) ----
 GRID_SPACING = 9.0       # cm, spacing between floor dots
@@ -109,6 +109,8 @@ class EnvConfig:
     r_progress: float = 0.1                # per cm of progress
     r_goal: float = 10.0
     r_collision: float = -0.5
+    r_collision_growth: float = 0.25       # each further blocked step in a row costs 25 % more (up to 3x)
+    reverse_free_steps: int = 10           # reversing is not penalized within 1 s after touching a wall
     r_time: float = -0.02
     r_smooth: float = -0.02
     r_out: float = -5.0

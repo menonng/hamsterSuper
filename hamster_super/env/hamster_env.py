@@ -110,6 +110,8 @@ class HamsterMazeEnv(gym.Env):
         self.t = 0
         self.prev_action = np.zeros(3)
         self.prev_rays = None
+        self.blocked_run = 0
+        self.last_hit_t = -10 ** 6
         self.collisions = 0
         self.pose_err = np.zeros(3)
         self._last_th = self.robot.th
@@ -215,10 +217,15 @@ class HamsterMazeEnv(gym.Env):
         self.prev_pose = pose
         progress = float(np.clip(phi_prev - phi, -5, 5))
         reward = cfg.r_progress * progress + cfg.r_time + cfg.r_smooth * float(da @ da)
+        # pushing on against a wall costs more the longer it goes on, and backing
+        # off a wall is free: the policy learns to reverse out instead of grinding
+        self.blocked_run = self.blocked_run + 1 if hit else 0
         if hit:
-            reward += cfg.r_collision
+            self.last_hit_t = self.t
+            reward += cfg.r_collision * (1 + cfg.r_collision_growth * min(self.blocked_run - 1, 8))
         back = -min(0.0, float(a[0] + a[1]) / 2)
-        reward += cfg.r_reverse * back
+        if self.t - self.last_hit_t > cfg.reverse_free_steps:
+            reward += cfg.r_reverse * back
         terminated = truncated = False
         info = {}
         m = self.map

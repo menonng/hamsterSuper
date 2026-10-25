@@ -157,3 +157,24 @@ def test_walls_block_without_pushing():
     assert hit
     assert abs(r.y - y_at_wall) < 0.05          # no sliding along the wall
     assert abs(r.th - math.radians(40)) < 1e-6  # not turned by the wall
+
+
+def test_rewards_favour_backing_off_a_wall():
+    """Grinding against a wall costs more and more; reversing right after
+    touching a wall is not penalized."""
+    from hamster_super.config import DomainRandomization
+    env = HamsterMazeEnv(EnvConfig(dr=DomainRandomization(enabled=False)), level=2, seed=0)
+    env.reset()
+    th = env.robot.th
+    # drive straight until blocked, then keep pushing
+    rewards = []
+    for _ in range(200):
+        _, r, te, tr, _ = env.step((1.0, 1.0, 0.0))
+        if env.blocked_run >= 1:
+            rewards.append(r)
+        if len(rewards) >= 6 or te or tr:
+            break
+    if len(rewards) >= 6:
+        assert rewards[5] < rewards[1]                       # escalating
+        _, r_back, _, _, _ = env.step((-1.0, -1.0, 0.0))
+        assert env.t - env.last_hit_t <= env.cfg.reverse_free_steps
