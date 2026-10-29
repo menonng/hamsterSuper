@@ -17,7 +17,7 @@ from .perception import Perception
 class Runtime:
     def __init__(self, cfg: EnvConfig, hw, policy, start_pose, goal, bounds, prior: GridMap | None = None,
                  perception: Perception | None = None, realtime: bool = True, stale_frame_s: float = 0.5,
-                 race: str = "lap"):
+                 race: str = "race"):
         self.race = race
         self.cfg, self.hw, self.policy = cfg, hw, policy
         self.perception = perception or Perception(cfg.camera)
@@ -67,6 +67,8 @@ class Runtime:
             self.finish_time = time.time() - (self.t_start or time.time())
             if self.stack.roundtrip is None:
                 self.status = f"GOAL in {self.finish_time:.2f}s"
+            elif self.race == "race":
+                self.status = f"FINISHED in {self.finish_time:.2f}s"
             elif self.race == "lap":
                 self.status = f"LAP done in {self.finish_time:.2f}s"
             else:
