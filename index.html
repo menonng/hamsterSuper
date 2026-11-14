@@ -1,0 +1,830 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HamsterSuper Training Monitor</title>
+<link rel="icon" href="data:,">
+<meta name="hs-static" content="1">
+<style>
+  :root {
+    --red: #FF0045; --orange: #FF7E00; --yellow: #FFCC11; --green: #55BB44;
+    --sky: #39C5BB; --blue: #3355BB; --purple: #660099; --pink: #FFB4CC;
+    --bg: #F3F5FB; --panel: #FFFFFF; --ink: #1B2A5E; --ink2: #4A5888; --muted: #8590B8;
+    --line: #E1E6F4; --grid: #EDF0F8;
+    --series: var(--blue); --release: #E0A800; /* darker step of yellow for contrast on white */
+    --truewall: var(--purple); --floor3d: #E4E8F4; --dot3d: #B8C0DA;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1530; --panel: #172042; --ink: #E8ECFA; --ink2: #B5BEDF; --muted: #7F8AB4;
+      --line: #2A3563; --grid: #222C55; --series: var(--sky); --release: var(--yellow); --truewall: #B266E0; --floor3d: #1C2550; --dot3d: #3A4680;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1530; --panel: #172042; --ink: #E8ECFA; --ink2: #B5BEDF; --muted: #7F8AB4;
+    --line: #2A3563; --grid: #222C55; --series: var(--sky); --release: var(--yellow); --truewall: #B266E0; --floor3d: #1C2550; --dot3d: #3A4680;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font-family: system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  header { padding: 12px 16px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+           background: var(--panel); border-bottom: 1px solid var(--line); }
+  h1 { margin: 0; font-size: 18px; color: var(--series); }
+  .sub { color: var(--muted); font-size: 13px; }
+  .live { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--green); }
+  .dot.stale { background: var(--red); }
+  .wrap { padding: 16px; display: grid; gap: 16px; max-width: 1500px; margin: 0 auto; }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+  .tile, .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; min-width: 0; }
+  .tile .k { font-size: 12px; color: var(--muted); }
+  .tile .v { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; margin-top: 2px; }
+  .main { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 16px; }
+  @media (max-width: 1000px) { .main { grid-template-columns: minmax(0, 1fr); } }
+  .charts { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  @media (max-width: 640px) { .charts { grid-template-columns: minmax(0, 1fr); } }
+  .chart h3 { margin: 0; font-size: 13px; font-weight: 600; color: var(--ink2); display: flex; justify-content: space-between; }
+  .chart h3 b { color: var(--ink); font-size: 15px; font-variant-numeric: tabular-nums; }
+  .chart svg { width: 100%; height: 150px; display: block; margin-top: 6px; overflow: visible; }
+  .chart text { fill: var(--muted); font-size: 10px; font-variant-numeric: tabular-nums; }
+  h2 { font-size: 14px; margin: 0 0 8px; color: var(--ink2); }
+  canvas { width: 100%; height: auto; display: block; }
+  .legend { font-size: 12px; color: var(--ink2); display: flex; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+  .sw { display: inline-block; width: 14px; height: 3px; border-radius: 2px; vertical-align: middle; margin-right: 4px; }
+  .sw.box { height: 10px; width: 10px; }
+  .replay-meta { font-size: 13px; color: var(--ink2); display: flex; gap: 14px; flex-wrap: wrap; margin-bottom: 8px; }
+  .replay-meta b { color: var(--ink); font-variant-numeric: tabular-nums; }
+  .badge { padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .ok { background: var(--green); color: #fff; } .bad { background: var(--red); color: #fff; } .run { background: var(--line); color: var(--ink); }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+  td.n, th.n { text-align: right; }
+  .hist { display: flex; gap: 3px; flex-wrap: wrap; margin-top: 8px; }
+  .hist i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .tip { position: fixed; pointer-events: none; background: var(--panel); border: 1px solid var(--line);
+         border-radius: 8px; padding: 6px 9px; font-size: 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12);
+         display: none; z-index: 10; color: var(--ink2); }
+  .tip b { color: var(--ink); font-size: 14px; display: block; }
+  .seg { display: inline-flex; background: var(--line); border-radius: 8px; padding: 2px; gap: 2px; }
+  .seg button { border: 0; background: transparent; color: var(--ink2); padding: 5px 10px; border-radius: 6px;
+                cursor: pointer; font-size: 13px; font-weight: 600; }
+  .seg button.on { background: var(--panel); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+  .viewbar { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; align-items: center; }
+  #view3d { position: relative; width: 100%; aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden; display: none; }
+  #view3d canvas { width: 100% !important; height: 100% !important; }
+  #view3d .hint { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: var(--muted); pointer-events: none; }
+  #view3d .err { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 13px; padding: 16px; text-align: center; }
+  button.theme { margin-left: auto; background: var(--line); color: var(--ink); border: 0; border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+</style>
+</head>
+<body>
+<header>
+  <h1>🐹 HamsterSuper Training Monitor</h1>
+  <span class="sub" id="run"></span>
+  <span class="live"><i class="dot" id="livedot"></i><span id="livetxt">connecting…</span></span>
+  <button class="theme" id="themeBtn">Theme</button>
+</header>
+<div class="wrap">
+  <div class="tiles" id="tiles"></div>
+  <div class="main">
+    <div class="card">
+      <h2>Live replay — the latest model drives a random maze</h2>
+      <div class="replay-meta" id="rmeta"></div>
+      <div class="viewbar">
+        <div class="seg" id="dimSeg"><button data-v="3d">3D</button><button data-v="2d">2D</button></div>
+        <div class="seg" id="camSeg"><button data-c="orbit">Free view</button><button data-c="chase">Chase</button><button data-c="robot">Robot camera</button></div>
+      </div>
+      <div id="view3d"><span class="hint" id="hint3d"></span></div>
+      <canvas id="maze" width="760" height="560"></canvas>
+      <div class="legend">
+        <span><i class="sw" id="swTrue" style="background:var(--truewall);opacity:.5"></i><span id="lgTrue">Actual walls</span></span>
+        <span><i class="sw" style="background:var(--blue)"></i><span id="lgFound">Walls the robot found</span></span>
+        <span><i class="sw" style="background:var(--green)"></i>Racing line</span>
+        <span><i class="sw box" style="background:var(--sky)"></i>IN / <i class="sw box" style="background:var(--yellow)"></i>MID / <i class="sw box" style="background:var(--orange)"></i>OUT line (corners and straights, relative to the next turn)</span>
+        <span><i class="sw" style="background:var(--pink)"></i>Actual track</span>
+        <span><i class="sw" style="background:var(--red)"></i>Hitbox (collision footprint)</span>
+        <span><i class="sw box" style="background:var(--orange)"></i>Moving course parts</span>
+        <span><i class="sw" style="background:var(--sky)"></i>Camera rays (faint dashed: no wall detected)</span>
+        <span><i class="sw box" style="background:var(--red)"></i>Goal</span>
+      </div>
+      <div style="margin-top:10px;font-size:12px;color:var(--muted)" id="histlabel">Recent replay results (newest first)</div>
+      <div class="hist" id="hist"></div>
+    </div>
+    <div style="display:grid;gap:12px;align-content:start">
+      <div class="charts" id="charts"></div>
+      <div class="card">
+        <h2>GitHub releases (every 500 iterations)</h2>
+        <table id="rel"><thead><tr><th>Tag</th><th class="n">Success (level)</th><th class="n">Race size</th><th class="n">Example maps</th><th class="n">Collisions/ep</th><th class="n">Finish time</th></tr></thead><tbody></tbody></table>
+      </div>
+    </div>
+  </div>
+</div>
+<div class="tip" id="tip"></div>
+<script>
+const G = 9;
+const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+const $ = id => document.getElementById(id);
+const fmt = {
+  pct: v => (v * 100).toFixed(1) + '%', f1: v => v.toFixed(1), f2: v => v.toFixed(2),
+  f3: v => v.toFixed(3), int: v => Math.round(v).toLocaleString(), s: v => v.toFixed(1) + ' s',
+};
+
+// ----- theme toggle (the choice persists per browser)
+(function () {
+  let t = null; try { t = localStorage.getItem('hs-theme'); } catch (e) {}
+  if (t) document.documentElement.dataset.theme = t;
+  $('themeBtn').onclick = () => {
+    const dark = document.documentElement.dataset.theme === 'dark' ||
+      (!document.documentElement.dataset.theme && matchMedia('(prefers-color-scheme: dark)').matches);
+    const next = dark ? 'light' : 'dark';
+    document.documentElement.dataset.theme = next;
+    try { localStorage.setItem('hs-theme', next); } catch (e) {}
+    renderCharts(); drawMaze(lastReplay); if (window.HS3D) window.HS3D.retheme();
+  };
+})();
+
+// ----- learning curves
+const CHARTS = [
+  {key: 'success', title: 'Success rate (last 200 episodes)', f: fmt.pct, min: 0, max: 1},
+  {key: 'ep_return', title: 'Mean episode return', f: fmt.f2},
+  {key: 'finish_time', title: 'Finish time (successful episodes)', f: fmt.s, min: 0},
+  {key: 'collisions', title: 'Wall-contact steps per episode', f: fmt.f1, min: 0},
+  {key: 'level', title: 'Curriculum level (0–5: course 4×4 … 14×14)', f: v => 'Lv ' + v, min: 0, max: 5, step: true},
+  {key: 'std', title: 'Policy exploration (std)', f: fmt.f3, min: 0},
+];
+let rows = [], releasesData = [];
+const chartsEl = $('charts');
+CHARTS.forEach(c => {
+  const d = document.createElement('div'); d.className = 'card chart';
+  d.innerHTML = `<h3><span></span><b></b></h3><svg role="img"></svg>`;
+  d.querySelector('span').textContent = c.title;
+  chartsEl.appendChild(d); c.el = d;
+});
+
+function niceTicks(lo, hi, n = 4) {
+  const span = hi - lo || 1, step0 = span / n, mag = Math.pow(10, Math.floor(Math.log10(step0)));
+  const step = [1, 2, 2.5, 5, 10].map(m => m * mag).find(s => s >= step0) || mag * 10;
+  const out = []; for (let v = Math.ceil(lo / step) * step; v <= hi + 1e-9; v += step) out.push(+v.toFixed(10));
+  return out;
+}
+
+function renderChart(c) {
+  const svg = c.el.querySelector('svg');
+  const W = svg.clientWidth || 400, H = 150, L = 42, R = 8, T = 6, B = 18;
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+  const pts = rows.filter(r => r[c.key] !== undefined && r[c.key] !== null);
+  svg.innerHTML = '';
+  const last = pts[pts.length - 1];
+  c.el.querySelector('b').textContent = last ? c.f(last[c.key]) : '–';
+  if (pts.length < 2) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    t.setAttribute('x', W / 2); t.setAttribute('y', H / 2); t.setAttribute('text-anchor', 'middle');
+    t.textContent = 'No data yet'; svg.appendChild(t); return;
+  }
+  // downsample for drawing
+  const stride = Math.max(1, Math.floor(pts.length / 800));
+  const P = pts.filter((_, i) => i % stride === 0 || i === pts.length - 1);
+  const xs = P.map(r => r.iter), ys = P.map(r => r[c.key]);
+  const x0 = xs[0], x1 = xs[xs.length - 1];
+  let y0 = c.min !== undefined ? c.min : Math.min(...ys), y1 = c.max !== undefined ? c.max : Math.max(...ys);
+  if (c.min === undefined || c.max === undefined) { const pad = (y1 - y0) * 0.08 || 1; if (c.min === undefined) y0 -= pad; if (c.max === undefined) y1 += pad; }
+  const X = v => L + (v - x0) / ((x1 - x0) || 1) * (W - L - R), Y = v => T + (1 - (v - y0) / ((y1 - y0) || 1)) * (H - T - B);
+  const ns = 'http://www.w3.org/2000/svg';
+  const el = (tag, attrs, parent = svg) => { const e = document.createElementNS(ns, tag); for (const k in attrs) e.setAttribute(k, attrs[k]); parent.appendChild(e); return e; };
+  for (const t of niceTicks(y0, y1, 3)) {
+    el('line', {x1: L, x2: W - R, y1: Y(t), y2: Y(t), stroke: css('--grid'), 'stroke-width': 1});
+    const tx = el('text', {x: L - 6, y: Y(t) + 3, 'text-anchor': 'end'}); tx.textContent = c.f(t).replace(' s', '');
+  }
+  for (const t of niceTicks(x0, x1, 4)) {
+    const tx = el('text', {x: X(t), y: H - 4, 'text-anchor': 'middle'}); tx.textContent = t.toLocaleString();
+  }
+  // release markers
+  for (const r of releasesData) if (r.iter >= x0 && r.iter <= x1) {
+    el('line', {x1: X(r.iter), x2: X(r.iter), y1: T, y2: H - B, stroke: css('--release'), 'stroke-width': 1.5, 'stroke-dasharray': '3 3'});
+  }
+  let d = '';
+  P.forEach((r, i) => {
+    const px = X(r.iter).toFixed(1), py = Y(r[c.key]).toFixed(1);
+    if (c.step && i) d += `H${px}V${py}`; else d += (i ? 'L' : 'M') + px + ',' + py;
+  });
+  el('path', {d, fill: 'none', stroke: css('--series'), 'stroke-width': 2, 'stroke-linejoin': 'round', 'stroke-linecap': 'round'});
+  // hover: crosshair snaps to the nearest iteration
+  const hair = el('line', {y1: T, y2: H - B, stroke: css('--ink2'), 'stroke-width': 1, opacity: 0});
+  const mk = el('circle', {r: 4, fill: css('--series'), stroke: css('--panel'), 'stroke-width': 2, opacity: 0});
+  const hit = el('rect', {x: L, y: 0, width: W - L - R, height: H, fill: 'transparent'});
+  const tip = $('tip');
+  hit.addEventListener('pointermove', ev => {
+    const bb = svg.getBoundingClientRect(), mx = (ev.clientX - bb.left) / bb.width * W;
+    const it = x0 + (mx - L) / (W - L - R) * (x1 - x0);
+    let best = pts[0]; for (const r of pts) if (Math.abs(r.iter - it) < Math.abs(best.iter - it)) best = r;
+    hair.setAttribute('x1', X(best.iter)); hair.setAttribute('x2', X(best.iter)); hair.setAttribute('opacity', .5);
+    mk.setAttribute('cx', X(best.iter)); mk.setAttribute('cy', Y(best[c.key])); mk.setAttribute('opacity', 1);
+    tip.replaceChildren();
+    const b = document.createElement('b'); b.textContent = c.f(best[c.key]); tip.appendChild(b);
+    tip.appendChild(document.createTextNode(`iteration ${best.iter.toLocaleString()} · ${best.episodes.toLocaleString()} episodes`));
+    tip.style.display = 'block';
+    tip.style.left = Math.min(ev.clientX + 14, innerWidth - 220) + 'px'; tip.style.top = (ev.clientY + 14) + 'px';
+  });
+  hit.addEventListener('pointerleave', () => { tip.style.display = 'none'; hair.setAttribute('opacity', 0); mk.setAttribute('opacity', 0); });
+}
+function renderCharts() { CHARTS.forEach(renderChart); }
+addEventListener('resize', renderCharts);
+
+function renderTiles() {
+  const r = rows[rows.length - 1] || {};
+  const hours = (r.elapsed_min || 0) / 60;
+  const tiles = [
+    ['Iteration', r.iter !== undefined ? fmt.int(r.iter) : '–'],
+    ['Episodes', r.episodes !== undefined ? fmt.int(r.episodes) : '–'],
+    ['Curriculum level', r.level !== undefined ? 'Lv ' + r.level : '–'],
+    ['Success rate', r.success !== undefined ? fmt.pct(r.success) : '–'],
+    ['Speed (steps/s)', r.fps !== undefined ? fmt.int(r.fps) : '–'],
+    ['Next release', r.iter !== undefined ? 'iter ' + fmt.int((Math.floor(r.iter / 500) + 1) * 500) : '–'],
+    ['Elapsed (this run)', hours >= 1 ? hours.toFixed(1) + ' h' : (r.elapsed_min || 0).toFixed(0) + ' min'],
+  ];
+  // fixed benchmark (same courses and seeds every time; compare within one simulator version)
+  const b = benchData[benchData.length - 1];
+  if (b) {
+    const prev = benchData.slice(0, -1).reverse().find(x => x.env_version === b.env_version);
+    const delta = prev ? ` (${b.success_rate >= prev.success_rate ? '+' : ''}${((b.success_rate - prev.success_rate) * 100).toFixed(0)} pt)` : '';
+    tiles.push([`Benchmark · iter ${fmt.int(b.iter)}`, fmt.pct(b.success_rate) + delta]);
+    tiles.push(['Benchmark s/cell · contacts', `${b.seconds_per_cell != null ? b.seconds_per_cell.toFixed(2) : '–'} · ${b.collisions_per_episode.toFixed(0)}`]);
+  }
+  $('tiles').replaceChildren(...tiles.map(([k, v]) => {
+    const d = document.createElement('div'); d.className = 'tile';
+    const a = document.createElement('div'); a.className = 'k'; a.textContent = k;
+    const b = document.createElement('div'); b.className = 'v'; b.textContent = v;
+    d.append(a, b); return d;
+  }));
+}
+
+function renderReleases() {
+  const tb = $('rel').querySelector('tbody'); tb.replaceChildren();
+  if (!releasesData.length) {
+    const tr = document.createElement('tr'), td = document.createElement('td'); td.colSpan = 6; td.textContent = 'No releases yet';
+    td.style.color = css('--muted'); tr.appendChild(td); tb.appendChild(tr); return;
+  }
+  for (const r of releasesData.slice().reverse()) {
+    const tr = document.createElement('tr');
+    const cells = [r.tag, r.success_rate != null ? fmt.pct(r.success_rate) + (r.level != null ? ` (Lv ${r.level})` : '') : '–',
+                   r.race_success != null ? fmt.pct(r.race_success) : '–', r.maps_success != null ? fmt.pct(r.maps_success) : '–',
+                   r.collisions != null ? fmt.f1(r.collisions) : '–', r.mean_time_s != null ? fmt.s(r.mean_time_s) : '–'];
+    cells.forEach((v, i) => { const td = document.createElement('td'); td.textContent = v; if (i) td.className = 'n'; tr.appendChild(td); });
+    tb.appendChild(tr);
+  }
+}
+
+// ----- live replay
+const cv = $('maze'), ctx = cv.getContext('2d');
+let lastReplay = null;
+const CORNER = {in: {text: 'IN', bg: '--sky'}, mid: {text: 'MID', bg: '--yellow'}, out: {text: 'OUT', bg: '--orange'}};
+function drawMaze(s) {
+  ctx.clearRect(0, 0, cv.width, cv.height);
+  if (!s || !s.bounds) {
+    ctx.fillStyle = css('--muted'); ctx.font = '16px system-ui';
+    ctx.fillText(s ? s.status : 'waiting for a checkpoint…', 20, 40); return;
+  }
+  const [x0, y0, x1, y1] = s.bounds, W = (x1 - x0 + 1) * G, H = (y1 - y0 + 1) * G, pad = 8;
+  const sc = Math.min((cv.width - 2 * pad) / W, (cv.height - 2 * pad) / H);
+  const ox = (cv.width - W * sc) / 2, oy = (cv.height - H * sc) / 2;
+  const X = x => ox + (x - x0 * G) * sc, Y = y => cv.height - oy - (y - y0 * G) * sc;
+  ctx.fillStyle = css('--grid');
+  for (let i = x0; i <= x1 + 1; i++) for (let j = y0; j <= y1 + 1; j++) { ctx.beginPath(); ctx.arc(X(i * G), Y(j * G), 2, 0, 7); ctx.fill(); }
+  const walls = (list, col, alpha, w) => { ctx.strokeStyle = col; ctx.globalAlpha = alpha; ctx.lineWidth = w; ctx.lineCap = 'round';
+    for (const [a, b] of list) { ctx.beginPath(); ctx.moveTo(X(a[0] * G), Y(a[1] * G)); ctx.lineTo(X(b[0] * G), Y(b[1] * G)); ctx.stroke(); }
+    ctx.globalAlpha = 1; };
+  walls(s.true_walls, css('--truewall'), 0.35, Math.max(3, 0.5 * sc));
+  walls(s.walls, css('--blue'), 1, Math.max(3, 0.5 * sc));
+  const cell = (c, col) => { ctx.fillStyle = col; ctx.globalAlpha = .8; ctx.fillRect(X(c[0] * G + 2), Y(c[1] * G + 7), 5 * sc, 5 * sc); ctx.globalAlpha = 1; };
+  cell(s.start, css('--yellow')); cell(s.goal, css('--red'));
+  if (s.line && s.line.length > 1) {          // racing line
+    ctx.strokeStyle = css('--green'); ctx.lineWidth = 2.5; ctx.beginPath();
+    s.line.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke();
+  } else if (s.path && s.path.length) {
+    ctx.strokeStyle = css('--green'); ctx.lineWidth = 2.5; ctx.setLineDash([6, 6]); ctx.beginPath();
+    ctx.moveTo(X(s.est[0]), Y(s.est[1])); for (const c of s.path.slice(1)) ctx.lineTo(X((c[0] + .5) * G), Y((c[1] + .5) * G));
+    ctx.stroke(); ctx.setLineDash([]);
+  }
+  for (const c of (s.corners || [])) {        // inside / outside call per corner and straight cell
+    const lab = CORNER[c.label]; if (!lab) continue;
+    const cx = X((c.cell[0] + .5) * G), cy = Y((c.cell[1] + .5) * G);
+    const small = c.kind === 'straight';
+    ctx.font = small ? '600 9px system-ui' : '600 11px system-ui'; const w = ctx.measureText(lab.text).width + (small ? 6 : 10);
+    const hh = small ? 13 : 18;
+    ctx.globalAlpha = small ? .8 : 1;
+    ctx.fillStyle = css(lab.bg); ctx.beginPath(); ctx.roundRect(cx - w / 2, cy - hh / 2, w, hh, hh / 2); ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = '#1B2A5E'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(lab.text, cx, cy + 0.5);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  }
+  const trail = (t, col) => { if (!t || t.length < 2) return; ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.beginPath();
+    t.forEach((p, i) => i ? ctx.lineTo(X(p[0]), Y(p[1])) : ctx.moveTo(X(p[0]), Y(p[1]))); ctx.stroke(); };
+  trail(s.trail, css('--pink'));
+  // moving course parts (rotating walls, sliding blocks)
+  ctx.fillStyle = css('--orange');
+  for (const b of (s.dyn || [])) ctx.fillRect(X(b[0]), Y(b[3]), (b[2] - b[0]) * sc, (b[3] - b[1]) * sc);
+  const [px, py, th] = s.pose, cx = px + s.cam_forward * Math.cos(th), cy = py + s.cam_forward * Math.sin(th);
+  ctx.strokeStyle = css('--sky'); ctx.lineWidth = 1; ctx.globalAlpha = .8;
+  s.rays.forEach((r, k) => { const a = th + s.ray_angles[k];
+    const miss = r >= ((s.cam && s.cam.max_range) || 45) - 0.1;   // nothing detected (open, or a missed detection)
+    ctx.globalAlpha = miss ? .25 : .8; ctx.setLineDash(miss ? [3, 4] : []);
+    ctx.beginPath(); ctx.moveTo(X(cx), Y(cy));
+    ctx.lineTo(X(cx + r * Math.cos(a)), Y(cy + r * Math.sin(a))); ctx.stroke(); });
+  ctx.setLineDash([]); ctx.globalAlpha = 1;
+  const bl = (s.cam && s.cam.body_l) || 4, bw = (s.cam && s.cam.body_w) || 3.5;
+  const robot = (p, col, ring) => {   // the footprint the simulator collides with
+    const c = Math.cos(p[2]), sn = Math.sin(p[2]);
+    ctx.fillStyle = col; ctx.beginPath();
+    [[1, 1], [1, -1], [-1, -1], [-1, 1]].forEach(([a, b], i) => {
+      const x = p[0] + a * bl / 2 * c - b * bw / 2 * sn, y = p[1] + a * bl / 2 * sn + b * bw / 2 * c;
+      i ? ctx.lineTo(X(x), Y(y)) : ctx.moveTo(X(x), Y(y));
+    });
+    ctx.closePath(); ctx.fill();
+    ctx.strokeStyle = ring; ctx.lineWidth = 2; ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(X(p[0]), Y(p[1])); ctx.lineTo(X(p[0] + 3 * Math.cos(p[2])), Y(p[1] + 3 * Math.sin(p[2]))); ctx.stroke(); };
+  robot(s.pose, css('--pink'), css('--panel'));
+  if (s.full_stack) { ctx.globalAlpha = .85; robot(s.est, css('--orange'), css('--panel')); ctx.globalAlpha = 1; }
+}
+function renderReplay(s) {
+  lastReplay = s; drawMaze(s);
+  if (window.HS3D) window.HS3D.update(s);
+  const meta = $('rmeta'); meta.replaceChildren();
+  const add = (k, v) => { const sp = document.createElement('span'); sp.textContent = k + ' '; const b = document.createElement('b'); b.textContent = v; sp.appendChild(b); meta.appendChild(sp); };
+  const badge = document.createElement('span'); badge.className = 'badge ' + (s.status === 'GOAL' ? 'ok' : s.status === 'failed' ? 'bad' : 'run');
+  badge.textContent = s.status === 'GOAL' ? 'Goal!' : s.status === 'failed' ? 'Failed' : (s.status === 'driving' ? 'Driving' : s.status);
+  meta.appendChild(badge);
+  if (s.bounds) {
+    add('Model', 'iter ' + (s.model_iter ?? '–')); add('Maze', `${s.bounds[2] + 1}×${s.bounds[3] + 1} (Lv ${s.level})`);
+    add('Time', s.time_s + ' s'); add('Shortest path', s.opt_cells + ' cells'); add('Wall contact', s.collisions);
+    add('Localization', s.full_stack ? 'dead reckoning + particle filter' : 'ideal');
+    if (s.full_stack && s.est) add('Pose error', Math.hypot(s.pose[0] - s.est[0], s.pose[1] - s.est[1]).toFixed(1) + ' cm');
+  }
+  const h = $('hist'); h.replaceChildren();
+  for (const r of (s.history || [])) {
+    const i = document.createElement('i'); i.style.background = r.success ? css('--green') : css('--red');
+    i.title = `${r.success ? 'success' : 'failed'} · ${r.time_s}s · iter ${r.model_iter}`; h.appendChild(i);
+  }
+}
+
+// ----- data sources: live API (local monitor) or static JSON (GitHub Pages)
+const STATIC = !!document.querySelector('meta[name="hs-static"]');
+let lastOk = 0, updatedAt = null;
+const getJSON = async u => (await fetch(u + (u.includes('?') ? '&' : '?') + 't=' + Date.now(), {cache: 'no-store'})).json();
+
+async function pollLog() {
+  try {
+    if (STATIC) {
+      const j = await getJSON('data/log.json');
+      if (j.updated !== updatedAt) {
+        updatedAt = j.updated; rows = j.rows; $('run').textContent = j.run || '';
+        renderCharts(); renderTiles();
+      }
+    } else {
+      const j = await getJSON('/api/log?since=' + rows.length);
+      if (j.start === rows.length && j.rows.length) { rows = rows.concat(j.rows); renderCharts(); renderTiles(); }
+    }
+    lastOk = Date.now();
+  } catch (e) {}
+  setTimeout(pollLog, STATIC ? 60000 : 3000);
+}
+let benchData = [];
+async function pollBench() {
+  try { benchData = await getJSON(STATIC ? 'data/benchmark.json' : '/api/benchmark'); renderTiles(); } catch (e) {}
+  setTimeout(pollBench, STATIC ? 60000 : 30000);
+}
+async function pollReleases() {
+  try { releasesData = await getJSON(STATIC ? 'data/releases.json' : '/api/releases'); renderReleases(); renderCharts(); } catch (e) {}
+  setTimeout(pollReleases, STATIC ? 60000 : 15000);
+}
+
+// live: poll the monitor's replay thread
+async function pollReplay() {
+  try { renderReplay(await getJSON('/api/replay')); } catch (e) {}
+  setTimeout(pollReplay, 150);
+}
+
+// static: play back the episodes recorded by the trainer, one after another
+let episodes = [], epIdx = 0, stepIdx = 0, epKey = null, wallSet = new Map();
+async function loadEpisodes() {
+  try {
+    const j = await getJSON('data/replays.json');
+    const key = j.updated;
+    if (key !== epKey) { epKey = key; episodes = j.episodes || []; epIdx = 0; stepIdx = 0; wallSet = new Map(); }
+  } catch (e) {}
+  setTimeout(loadEpisodes, 60000);
+}
+function playStep() {
+  const ep = episodes[epIdx];
+  if (!ep) { renderReplay({status: 'No recorded runs yet'}); return setTimeout(playStep, 1000); }
+  const n = ep.frames.length;
+  if (stepIdx === 0) wallSet = new Map();
+  for (const ev of ep.wall_events) if (ev[0] === stepIdx) {
+    const k = JSON.stringify([ev[2], ev[3]]); if (ev[1] > 0) wallSet.set(k, [ev[2], ev[3]]); else wallSet.delete(k);
+  }
+  const f = ep.frames[Math.min(stepIdx, n - 1)];
+  const done = stepIdx >= n - 1;
+  renderReplay({
+    status: done ? (ep.result.success ? 'GOAL' : 'failed') : 'driving',
+    model_iter: ep.model_iter, level: ep.level, bounds: ep.bounds, true_walls: ep.true_walls,
+    walls: [...wallSet.values()], start: ep.start, goal: ep.goal,
+    pose: f.p, est: f.e, rays: f.r, ray_angles: ep.ray_angles, cam_forward: ep.cam_forward, dyn: f.d || [],
+    path: f.c, line: f.line, corners: f.corners, trail: ep.frames.slice(0, stepIdx + 1).map(q => q.p), full_stack: ep.full_stack, cam: ep.cam,
+    time_s: ((stepIdx + 1) * ep.dt).toFixed(1), opt_cells: ep.opt_cells, collisions: f.k,
+    history: episodes.map(e => e.result),
+  });
+  if (done) { stepIdx = 0; epIdx = (epIdx + 1) % episodes.length; return setTimeout(playStep, 1500); }
+  stepIdx++;
+  setTimeout(playStep, ep.dt * 1000);
+}
+
+setInterval(() => {
+  const r = rows[rows.length - 1];
+  if (STATIC) {
+    const age = updatedAt ? (Date.now() / 1000 - updatedAt) / 60 : null;
+    $('livedot').className = 'dot' + (age !== null && age < 30 ? '' : ' stale');
+    $('livetxt').textContent = age === null ? 'loading…' :
+      `updated ${age < 1 ? 'just now' : Math.round(age) + ' min ago'}${r ? ' · iter ' + r.iter.toLocaleString() : ''}`;
+  } else {
+    const fresh = Date.now() - lastOk < 10000;
+    $('livedot').className = 'dot' + (fresh ? '' : ' stale');
+    $('livetxt').textContent = fresh ? (r ? `live · iter ${r.iter.toLocaleString()}` : 'live · waiting for log') : 'disconnected';
+  }
+}, 1000);
+if (STATIC) {
+  document.querySelector('.card h2').textContent = 'Replay — recorded runs of the latest model';
+  $('histlabel').textContent = 'Results of the recorded runs (played in order)';
+  loadEpisodes().then(playStep);
+} else {
+  fetch('/api/info').then(r => r.json()).then(j => { $('run').textContent = j.run; });
+  pollReplay();
+}
+pollLog(); pollReleases(); pollBench(); renderTiles();
+
+// ----- 2D / 3D view switch (remembered per browser)
+const viewState = {dim: '3d', cam: 'chase'};
+try { Object.assign(viewState, JSON.parse(localStorage.getItem('hs-view') || '{}')); } catch (e) {}
+function applyView() {
+  const is3d = viewState.dim === '3d' && !window.HS3D_FAILED;
+  $('view3d').style.display = is3d ? 'block' : 'none';
+  $('maze').style.display = is3d ? 'none' : 'block';
+  $('camSeg').style.display = is3d ? '' : 'none';
+  document.querySelectorAll('#dimSeg button').forEach(b => b.classList.toggle('on', b.dataset.v === (is3d ? '3d' : '2d')));
+  document.querySelectorAll('#camSeg button').forEach(b => b.classList.toggle('on', b.dataset.c === viewState.cam));
+  if (window.HS3D) { window.HS3D.setVisible(is3d); window.HS3D.setCam(viewState.cam); }
+  // the 3D view shows the real course colours: white walls on a black floor
+  $('swTrue').style.cssText = is3d ? 'background:#F4F4F0;outline:1px solid var(--muted)' : 'background:var(--truewall);opacity:.5';
+  $('lgTrue').textContent = is3d ? 'Walls (white, real colours)' : 'Actual walls';
+  $('lgFound').textContent = is3d ? 'Walls the robot found (blue top)' : 'Walls the robot found';
+  try { localStorage.setItem('hs-view', JSON.stringify(viewState)); } catch (e) {}
+}
+document.querySelectorAll('#dimSeg button').forEach(b => b.onclick = () => { viewState.dim = b.dataset.v; applyView(); });
+document.querySelectorAll('#camSeg button').forEach(b => b.onclick = () => { viewState.cam = b.dataset.c; applyView(); });
+window.hsApplyView = applyView;
+window.hsLastReplay = () => lastReplay;
+window.hsCss = css;
+applyView();
+</script>
+
+<script type="importmap">
+{"imports": {"three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+             "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"}}
+</script>
+<script type="module">
+// ----- 3D replay (Three.js). Units: cm. Sim (x, y) -> three (x, -z); height -> y.
+let THREE, OrbitControls;
+try {
+  THREE = await import('three');
+  ({ OrbitControls } = await import('three/addons/controls/OrbitControls.js'));
+} catch (e) {
+  window.HS3D_FAILED = true;
+  document.getElementById('view3d').insertAdjacentHTML('beforeend',
+    '<div class="err">Could not load the 3D library (offline?). Showing the 2D view.</div>');
+  window.hsApplyView();
+}
+if (THREE && OrbitControls) init();
+
+function init() {
+  const G = 9, WALL_H = 2.5, WALL_T = 0.5;
+  const css = window.hsCss;
+  const col = n => new THREE.Color(css(n));
+  const box = document.getElementById('view3d');
+  const renderer = new THREE.WebGLRenderer({antialias: true});
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  box.prepend(renderer.domElement);
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(50, 4 / 3, 0.3, 2000);
+  const controls = new OrbitControls(cam, renderer.domElement);
+  controls.enableDamping = true;
+  controls.maxPolarAngle = Math.PI * 0.49;
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8890a8, 1.6));
+  const sun = new THREE.DirectionalLight(0xffffff, 1.6);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  scene.add(sun, sun.target);
+
+  const V = (x, y, h = 0) => new THREE.Vector3(x, h, -y);
+
+  // room around the course: a dome textured with a random background per episode
+  // (the same image set the camera is trained against; procedural if none exist)
+  const dome = new THREE.Mesh(new THREE.SphereGeometry(1, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.62),
+    new THREE.MeshBasicMaterial({side: THREE.BackSide, fog: false}));
+  scene.add(dome);
+  let bgList = [];
+  fetch('data/backgrounds.json').then(r => r.ok ? r.json() : []).then(l => { bgList = l || []; }).catch(() => {});
+  function proceduralBg() {
+    const c = document.createElement('canvas'); c.width = 1024; c.height = 256;
+    const g = c.getContext('2d'), rnd = (a, b) => a + Math.random() * (b - a);
+    const gr = g.createLinearGradient(0, 0, 0, 256);
+    gr.addColorStop(0, `hsl(${rnd(0, 360)},${rnd(0, 40)}%,${rnd(30, 90)}%)`);
+    gr.addColorStop(1, `hsl(${rnd(0, 360)},${rnd(0, 40)}%,${rnd(10, 70)}%)`);
+    g.fillStyle = gr; g.fillRect(0, 0, 1024, 256);
+    for (let i = 0; i < rnd(4, 14); i++) {      // furniture, posters, windows
+      g.fillStyle = Math.random() < .4 ? `hsl(0,0%,${rnd(85, 100)}%)` : `hsl(${rnd(0, 360)},${rnd(20, 70)}%,${rnd(20, 80)}%)`;
+      g.fillRect(rnd(0, 1024), rnd(0, 230), rnd(20, 240), rnd(16, 120));
+    }
+    for (let i = 0; i < rnd(0, 6); i++) {       // people
+      const x = rnd(0, 1024), w = rnd(14, 40), h = rnd(90, 230);
+      g.fillStyle = `hsl(${rnd(0, 360)},${rnd(10, 60)}%,${rnd(15, 75)}%)`;
+      g.beginPath(); g.ellipse(x, 256, w, h, 0, Math.PI, 2 * Math.PI); g.fill();
+      g.beginPath(); g.arc(x, 256 - h - w * .7, w * .6, 0, 2 * Math.PI); g.fill();
+    }
+    return new THREE.CanvasTexture(c);
+  }
+  function pickBackground() {
+    const use = tex => { tex.colorSpace = THREE.SRGBColorSpace; dome.material.map?.dispose(); dome.material.map = tex; dome.material.needsUpdate = true; };
+    if (bgList.length && Math.random() > .3)
+      new THREE.TextureLoader().load(bgList[Math.floor(Math.random() * bgList.length)], use, undefined, () => use(proceduralBg()));
+    else use(proceduralBg());
+  }
+  let mapGroup = null, mapKey = null, center = new THREE.Vector3(), span = 60;
+  let foundMesh = null, foundKey = '', dynMesh = null;
+  const MAXW = 600;
+
+  // --- robot: Hamster + 1.5 cm attachment + camera module of the same size on top
+  let geom = {h: 6.0, fwd: 2.0, pitch_deg: 35, hfov_deg: 70, attach: 1.5, module_h: 3.0, body_h: 3.0, body_l: 4.0, body_w: 3.5};
+  function makeRobot(bodyColor, isGhost) {
+    const g = new THREE.Group(), k = geom;
+    const bodyGeo = new THREE.BoxGeometry(k.body_l, k.body_h - 0.3, k.body_w);
+    const camGeo = new THREE.BoxGeometry(k.body_l, k.module_h, k.body_w);
+    const camY = k.body_h + k.attach + k.module_h / 2;
+    if (isGhost) {
+      const mat = new THREE.LineBasicMaterial({color: bodyColor});
+      const e = new THREE.LineSegments(new THREE.EdgesGeometry(bodyGeo), mat); e.position.y = 0.3 + (k.body_h - 0.3) / 2;
+      const c = new THREE.LineSegments(new THREE.EdgesGeometry(camGeo), mat); c.position.y = camY;
+      g.add(e, c);
+      return g;
+    }
+    const body = new THREE.Mesh(bodyGeo, new THREE.MeshStandardMaterial({color: bodyColor, roughness: .5}));
+    body.position.y = 0.3 + (k.body_h - 0.3) / 2; body.castShadow = true; g.add(body);
+    const dark = new THREE.MeshStandardMaterial({color: 0x2a2f3c, roughness: .9});
+    const wheelGeo = new THREE.CylinderGeometry(0.9, 0.9, 0.5, 20);
+    for (const z of [-(k.body_w / 2 - 0.25), k.body_w / 2 - 0.25]) {   // inside the footprint
+      const w = new THREE.Mesh(wheelGeo, dark); w.rotation.x = Math.PI / 2; w.position.set(0, 0.9, z); w.castShadow = true; g.add(w);
+    }
+    // the collision footprint (exactly what the simulator uses for wall contact)
+    const fp = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.PlaneGeometry(k.body_l, k.body_w)),
+      new THREE.LineBasicMaterial({color: css('--red')}));
+    fp.rotation.x = -Math.PI / 2; fp.position.y = 0.05; g.add(fp);
+    const attach = new THREE.Mesh(new THREE.BoxGeometry(k.body_l * .6, k.attach, k.body_w * .6), dark);
+    attach.position.y = k.body_h + k.attach / 2; g.add(attach);
+    const camBox = new THREE.Mesh(camGeo, new THREE.MeshStandardMaterial({color: 0x3a4152, roughness: .6}));
+    camBox.position.y = camY; camBox.castShadow = true; g.add(camBox);
+    // lens on the front face, tilted down by the configured pitch
+    const lens = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.5, 20), new THREE.MeshStandardMaterial({color: 0x0b0d14}));
+    lens.rotation.z = Math.PI / 2 - k.pitch_deg * Math.PI / 180;
+    lens.position.set(k.body_l / 2 + 0.2, camY, 0); g.add(lens);
+    return g;
+  }
+  let robot, ghost;
+  const rayGeo = new THREE.BufferGeometry();
+  rayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 6), 3));
+  const rays = new THREE.LineSegments(rayGeo, new THREE.LineBasicMaterial({transparent: true, opacity: .8}));
+  const missGeo = new THREE.BufferGeometry();
+  missGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(64 * 6), 3));
+  const raysMiss = new THREE.LineSegments(missGeo, new THREE.LineBasicMaterial({transparent: true, opacity: .2}));
+  rays.add(raysMiss);
+  const pathGeo = new THREE.BufferGeometry();
+  pathGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(200 * 3), 3));
+  const path = new THREE.Line(pathGeo, new THREE.LineBasicMaterial());
+  const trailGeo = new THREE.BufferGeometry();
+  trailGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(5000 * 3), 3));
+  const trail = new THREE.Line(trailGeo, new THREE.LineBasicMaterial());
+  scene.add(rays, path, trail);
+
+  function buildTheme() {
+    scene.background = col('--panel');
+    scene.fog = new THREE.Fog(scene.background, 300, 900);
+    rays.material.color = col('--sky'); raysMiss.material.color = col('--sky');
+    path.material.color = col('--green');
+    trail.material.color = col('--pink');
+    if (robot) scene.remove(robot, ghost);
+    robot = makeRobot(col('--pink'), false);
+    ghost = makeRobot(col('--orange'), true);
+    scene.add(robot, ghost);
+    mapKey = null; foundKey = '';
+    for (const k in tagTex) delete tagTex[k];
+    tagKey = '';
+  }
+
+  function buildMap(s) {
+    if (mapGroup) { scene.remove(mapGroup); mapGroup.traverse(o => { o.geometry?.dispose(); }); }
+    mapGroup = new THREE.Group();
+    const [x0, y0, x1, y1] = s.bounds;
+    const W = (x1 - x0 + 1) * G, H = (y1 - y0 + 1) * G;
+    center = V((x0 * G + (x1 + 1) * G) / 2, (y0 * G + (y1 + 1) * G) / 2);
+    span = Math.max(W, H);
+    // the real course: black floor, white walls (dot colour not known yet: grey)
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(W + 2 * G, H + 2 * G),
+      new THREE.MeshStandardMaterial({color: 0x121316, roughness: .55, metalness: .1}));
+    floor.rotation.x = -Math.PI / 2; floor.position.copy(center); floor.receiveShadow = true;
+    mapGroup.add(floor);
+    // floor dots every 9 cm
+    const nd = (x1 - x0 + 2) * (y1 - y0 + 2);
+    const dots = new THREE.InstancedMesh(new THREE.CircleGeometry(0.4, 12), new THREE.MeshBasicMaterial({color: 0x8a8f9c}), nd);
+    const m = new THREE.Matrix4(), q = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+    let k = 0;
+    for (let i = x0; i <= x1 + 1; i++) for (let j = y0; j <= y1 + 1; j++) {
+      m.compose(V(i * G, j * G, 0.02), q, new THREE.Vector3(1, 1, 1)); dots.setMatrixAt(k++, m);
+    }
+    mapGroup.add(dots);
+    // actual walls in their real colour; walls the robot has found get a blue cap on top
+    const walls = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({color: 0xf4f4f0, roughness: .8}), s.true_walls.length);
+    walls.castShadow = true; walls.receiveShadow = true;
+    s.true_walls.forEach((w, i) => walls.setMatrixAt(i, wallMatrix(w, 1)));
+    mapGroup.add(walls);
+    foundMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({color: col('--blue'), roughness: .6}), MAXW);
+    foundMesh.count = 0;
+    dynMesh = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1),
+      new THREE.MeshStandardMaterial({color: col('--orange'), roughness: .7}), 64);
+    dynMesh.count = 0; dynMesh.castShadow = true;
+    mapGroup.add(dynMesh);
+    mapGroup.add(foundMesh); foundKey = '';
+    const pad = (c, color, h, op) => {
+      const b = new THREE.Mesh(new THREE.BoxGeometry(G - 1, h, G - 1),
+        new THREE.MeshStandardMaterial({color, transparent: true, opacity: op}));
+      b.position.copy(V((c[0] + .5) * G, (c[1] + .5) * G, h / 2)); mapGroup.add(b);
+    };
+    pad(s.start, col('--yellow'), 0.15, .8);
+    pad(s.goal, col('--red'), 0.15, .85);
+    const flag = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 8, 8), new THREE.MeshStandardMaterial({color: col('--red')}));
+    flag.position.copy(V((s.goal[0] + .5) * G, (s.goal[1] + .5) * G, 4)); mapGroup.add(flag);
+    scene.add(mapGroup);
+    sun.position.copy(center).add(new THREE.Vector3(span * .4, span * 1.2, span * .6));
+    sun.target.position.copy(center);
+    const sc = sun.shadow.camera; sc.left = sc.bottom = -span; sc.right = sc.top = span; sc.far = span * 4; sc.updateProjectionMatrix();
+    controls.target.copy(center);
+    cam.position.copy(center).add(new THREE.Vector3(0, span * .9, span * .75));
+    dome.position.copy(center); dome.scale.setScalar(span * 2.5);
+    pickBackground();
+    smooth = null; smoothEst = null;
+  }
+  function wallMatrix([a, b], grow, cap) {
+    const horiz = a[1] === b[1];
+    const h = cap ? 0.3 : WALL_H, y = cap ? WALL_H + 0.15 : WALL_H / 2;
+    const pos = V((a[0] + b[0]) / 2 * G, (a[1] + b[1]) / 2 * G, y);
+    const scale = horiz ? new THREE.Vector3(G * grow, h, WALL_T * grow) : new THREE.Vector3(WALL_T * grow, h, G * grow);
+    return new THREE.Matrix4().compose(pos, new THREE.Quaternion(), scale);
+  }
+
+  // --- per-frame data
+  let target = null, smooth = null, est = null, smoothEst = null, visible = false, camMode = 'chase';
+  const angLerp = (a, b, t) => a + (((b - a + Math.PI) % (2 * Math.PI) + 2 * Math.PI) % (2 * Math.PI) - Math.PI) * t;
+  function update(s) {
+    if (!s || !s.bounds) return;
+    if (s.cam) {   // rebuild the robot model only when the geometry actually changes
+      const merged = {...geom, ...s.cam};
+      if (JSON.stringify(merged) !== JSON.stringify(geom)) { geom = merged; buildTheme(); setCam(camMode); }
+    }
+    const key = JSON.stringify([s.bounds, s.start, s.goal, s.true_walls.length]);
+    if (key !== mapKey) { mapKey = key; buildMap(s); }
+    const fk = s.walls.length + ':' + JSON.stringify(s.walls[s.walls.length - 1] || '');
+    if (fk !== foundKey) {
+      foundKey = fk; foundMesh.count = Math.min(s.walls.length, MAXW);
+      s.walls.slice(0, MAXW).forEach((w, i) => foundMesh.setMatrixAt(i, wallMatrix(w, 1.06, true)));
+      foundMesh.instanceMatrix.needsUpdate = true;
+    }
+    if (dynMesh) {           // moving course parts, wall height
+      const d = (s.dyn || []).slice(0, 64), mm = new THREE.Matrix4();
+      d.forEach((b, i) => { mm.compose(V((b[0] + b[2]) / 2, (b[1] + b[3]) / 2, WALL_H / 2), new THREE.Quaternion(),
+        new THREE.Vector3(b[2] - b[0], WALL_H, b[3] - b[1])); dynMesh.setMatrixAt(i, mm); });
+      dynMesh.count = d.length; dynMesh.instanceMatrix.needsUpdate = true;
+    }
+    target = s.pose; est = s.full_stack ? s.est : null;
+    if (!smooth || Math.hypot(smooth[0] - target[0], smooth[1] - target[1]) > 15) smooth = target.slice();
+    // rays from the camera's floor point
+    const pa = rayGeo.attributes.position.array; let k = 0;
+    // in the robot frame: the ray fan moves with the (smoothed) robot model
+    const cf = s.cam_forward;
+    const pm = missGeo.attributes.position.array; let km = 0;
+    s.rays.forEach((r, i) => { const a = s.ray_angles[i];
+      const seg = [cf, 0.15, 0, cf + r * Math.cos(a), 0.15, -r * Math.sin(a)];
+      if (r >= ((s.cam && s.cam.max_range) || 45) - 0.1) { pm.set(seg, km); km += 6; } else { pa.set(seg, k); k += 6; } });
+    rayGeo.setDrawRange(0, k / 3); rayGeo.attributes.position.needsUpdate = true;
+    missGeo.setDrawRange(0, km / 3); missGeo.attributes.position.needsUpdate = true;
+    const pp = pathGeo.attributes.position.array; k = 0;
+    const pts = s.line && s.line.length > 1 ? s.line
+      : s.path && s.path.length ? [[s.est[0], s.est[1]], ...s.path.slice(1).map(c => [(c[0] + .5) * G, (c[1] + .5) * G])] : [];
+    updateCornerTags(s.corners || []);
+    pts.slice(0, 200).forEach(q => { pp.set([q[0], 0.3, -q[1]], k); k += 3; });
+    pathGeo.setDrawRange(0, Math.min(pts.length, 200)); pathGeo.attributes.position.needsUpdate = true;
+    path.computeLineDistances();
+    const tp = trailGeo.attributes.position.array; const tr = (s.trail || []).slice(-5000); k = 0;
+    tr.forEach(q => { tp.set([q[0], 0.1, -q[1]], k); k += 3; });
+    trailGeo.setDrawRange(0, tr.length); trailGeo.attributes.position.needsUpdate = true;
+    ghost.visible = !!est && camMode !== 'robot';
+    if (est && (!smoothEst || Math.hypot(smoothEst[0] - est[0], smoothEst[1] - est[1]) > 15)) smoothEst = est.slice();
+  }
+
+  // corner tags (IN / MID / OUT) floating above turning cells
+  const tagGroup = new THREE.Group(); scene.add(tagGroup);
+  const tagTex = {};
+  let tagKey = '';
+  function tagMaterial(label) {
+    if (tagTex[label]) return tagTex[label];
+    const lab = {in: ['IN', '--sky'], mid: ['MID', '--yellow'], out: ['OUT', '--orange']}[label];
+    const c = document.createElement('canvas'); c.width = 128; c.height = 64;
+    const g = c.getContext('2d');
+    g.fillStyle = css(lab[1]); g.beginPath(); g.roundRect(4, 8, 120, 48, 24); g.fill();
+    g.fillStyle = '#1B2A5E'; g.font = '700 30px system-ui'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(lab[0], 64, 33);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    return (tagTex[label] = new THREE.SpriteMaterial({map: tex, depthTest: false}));
+  }
+  function updateCornerTags(corners) {
+    const key = JSON.stringify(corners.map(c => [c.cell, c.label]));
+    if (key === tagKey) return;
+    tagKey = key; tagGroup.clear();
+    for (const c of corners) {
+      if (!['in', 'mid', 'out'].includes(c.label)) continue;
+      const sp = new THREE.Sprite(tagMaterial(c.label));
+      const small = c.kind === 'straight';      // straights get a smaller, lower tag than corners
+      sp.position.copy(V((c.cell[0] + .5) * G, (c.cell[1] + .5) * G, small ? 4.5 : 6));
+      sp.scale.set(small ? 3.4 : 5, small ? 1.7 : 2.5, 1);
+      tagGroup.add(sp);
+    }
+  }
+
+  const hint = document.getElementById('hint3d');
+  function setCam(m) {
+    camMode = m; controls.enabled = m === 'orbit';
+    hint.textContent = m === 'orbit' ? 'Drag to rotate · scroll to zoom · right-drag to pan'
+      : m === 'robot' ? `Robot camera view: lens ${geom.h} cm high, tilted ${geom.pitch_deg}° down, ${geom.hfov_deg}° horizontal field of view` : '';
+    robot && (robot.visible = m !== 'robot');
+    ghost && est && (ghost.visible = m !== 'robot');
+  }
+  function resize() {
+    const w = box.clientWidth, h = box.clientHeight;
+    if (!w || !h) return;
+    renderer.setSize(w, h, false); cam.aspect = w / h; cam.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(box);
+
+  function frame() {
+    requestAnimationFrame(frame);
+    if (!visible || !target) return;
+    smooth[0] = target[0]; smooth[1] = target[1]; smooth[2] = target[2];   // drawn exactly where the simulator has it
+    const [x, y, th] = smooth, fwd = new THREE.Vector3(Math.cos(th), 0, -Math.sin(th));
+    robot.position.copy(V(x, y)); robot.rotation.y = th;
+    rays.position.copy(V(x, y)); rays.rotation.y = th;
+    if (est && smoothEst) {   // same interpolation as the robot model: both move at the same pace
+      smoothEst[0] = est[0]; smoothEst[1] = est[1]; smoothEst[2] = est[2];
+      ghost.position.copy(V(smoothEst[0], smoothEst[1])); ghost.rotation.y = smoothEst[2];
+    }
+    if (camMode === 'chase') {
+      cam.fov = 55; cam.position.copy(V(x, y, 0)).addScaledVector(fwd, -24).add(new THREE.Vector3(0, 22, 0));
+      cam.lookAt(V(x, y, 0).addScaledVector(fwd, 10));
+    } else if (camMode === 'robot') {
+      // same geometry as the training CameraSpec (lens height, forward offset, tilt, HFOV)
+      const hfov = geom.hfov_deg * Math.PI / 180;
+      cam.fov = 2 * Math.atan(Math.tan(hfov / 2) / cam.aspect) * 180 / Math.PI;
+      const p = V(x, y, geom.h).addScaledVector(fwd, geom.fwd + 0.05);
+      cam.position.copy(p);
+      const pitch = geom.pitch_deg * Math.PI / 180;
+      cam.lookAt(p.clone().addScaledVector(fwd, Math.cos(pitch)).add(new THREE.Vector3(0, -Math.sin(pitch), 0)));
+    } else {
+      cam.fov = 50; controls.update();
+    }
+    cam.near = camMode === 'robot' ? 0.2 : 0.5;
+    cam.updateProjectionMatrix();
+    renderer.render(scene, cam);
+  }
+
+  buildTheme();
+  window.HS3D = {
+    update, setCam,
+    setVisible(v) { visible = v; if (v) { resize(); } },
+    retheme() { buildTheme(); const s = window.hsLastReplay(); if (s) update(s); },
+  };
+  window.hsApplyView();
+  const s0 = window.hsLastReplay(); if (s0) update(s0);
+  requestAnimationFrame(frame);
+}
+</script>
+</body>
+</html>

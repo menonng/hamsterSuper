@@ -1,0 +1,15 @@
+# Lives in the gh-pages snapshot commits written by hamster_super/rl/pages.py.
+# It only marks "a new snapshot was pushed"; the deploy itself runs in
+# pages.yml on the default branch (via workflow_run), because the
+# github-pages environment only accepts deployments from the default branch.
+name: Pages snapshot
+
+on:
+  push:
+    branches: [gh-pages]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "dashboard snapshot ${GITHUB_SHA} pushed to gh-pages"
